@@ -1,0 +1,179 @@
+/* ===== Tile contents scale with the tile, so small grids such as 5 × 3 stay tidy ===== */
+.tile { container-type: size; }
+.tile .top > svg, .tile .top > .gif-ico { width: clamp(14px, 26cqmin, 40px) !important; height: auto !important; }
+.tile .top > .gif-ico { aspect-ratio: 4 / 3; }
+.tile.icon-only .top > svg, .tile.icon-only .top > .gif-ico { width: clamp(18px, 46cqmin, 64px) !important; }
+.tile .lbl { font-size: clamp(10px, 15cqmin, 15px); line-height: 1.15; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.tile .chip { font-size: clamp(9px, 11cqmin, 13px); border-width: 2px; }
+.tile .owner svg { width: clamp(16px, 28cqmin, 32px); height: auto; }
+.tile .badges { gap: 3px; }
+.anim.a-onair::after { font-size: clamp(7px, 9cqmin, 10px); line-height: 1.4; }
+@container (max-width: 112px) { .tile .chip { display: none; } }
+@container (max-height: 72px) { .tile .chip { display: none; } }
+
+/* ===== Image, GIF and design backgrounds ===== */
+.tile.has-img .lbl, .ptile.has-img .pl { align-self: flex-start; background: rgba(19, 24, 38, 0.78); color: #ffffff; padding: 0 4px; }
+.tile.has-img .top > svg { filter: drop-shadow(1px 1px 0 rgba(19, 24, 38, 0.6)); }
+.dsg { position: absolute; inset: 0; z-index: 0; overflow: hidden; container-type: size; pointer-events: none; }
+.dl { position: absolute; display: block; line-height: 1; }
+.dl-text { text-align: center; white-space: nowrap; }
+.dl-text.mono { font-family: "IBM Plex Mono", ui-monospace, monospace; letter-spacing: -0.02em; }
+.fx-outline { text-shadow: 1px 0 #1e2433, -1px 0 #1e2433, 0 1px #1e2433, 0 -1px #1e2433, 2px 2px 0 #1e2433; }
+.fx-shadow { text-shadow: 0.08em 0.08em 0 #1e2433; }
+.fx-blink { animation: aBlink 1s steps(2, end) infinite; }
+.dl-icon svg { display: block; width: 100%; height: 100%; }
+.dl-icon { min-height: 0; }
+.dl-icon .glyph-img { display: block; width: 100%; height: 100%; object-fit: contain; }
+/* Picture layers are .dl-image (layerHTML: "dl-" + the layer type); the picture fills its layer,
+   so it is the same share of the button in the editor's large canvas and on a small key */
+.dl-gif, .dl-image, .dl-img { overflow: hidden; }
+.dl-image img, .dl-img img { display: block; width: 100%; height: 100%; object-fit: contain; }
+/* A knob's picture turns in pixel steps, as the knob turns (knobAngle in 11-tiles-bench.js) */
+.dsg .dl-icon { transition: transform 150ms steps(3, end); }
+@media (prefers-reduced-motion: reduce) { .dsg .dl-icon { transition: none; } }
+/* Borders: --sw is the thickness (cqh, so it scales with the button) and --sc the colour */
+.dl.has-stroke::after, .dsg-stroke { content: ""; position: absolute; inset: 0; border: var(--sw) solid var(--sc); pointer-events: none; }
+.tile.has-dsg > .top > :not(.badges), .tile.has-dsg > .lbl, .tile.has-dsg > .wdg, .tile.has-dsg > .gif-bg { display: none; }
+.tile.has-dsg > .top { position: absolute; top: 4px; right: 6px; }
+.ptile.has-dsg { padding: 0; }
+.thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(58px, 1fr)); gap: 6px; }
+.thumbs > button { position: relative; overflow: hidden; display: grid; place-items: center; min-height: 48px; padding: 0; font: inherit; font-size: 11px; font-weight: 700; color: var(--ink); background: var(--tile) center / cover no-repeat; border: 3px solid var(--ink); cursor: pointer; image-rendering: pixelated; }
+.thumbs > button[aria-pressed="true"] { box-shadow: inset 0 0 0 3px var(--tile), inset 0 0 0 5px var(--ink); outline: 3px solid var(--mint-dark); outline-offset: 1px; }
+.thumbs > button:focus-visible { outline: 4px solid var(--focus); outline-offset: 2px; }
+.thumbs > button .tname { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; padding: 1px 2px; font-size: 10px; line-height: 1.2; background: rgba(19, 24, 38, 0.78); color: #ffffff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.thumbs.dthumbs { grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); }
+.thumbs.dthumbs > button { min-height: 64px; }
+.upload { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* ===== Button press animations ===== */
+.anim-card { border: 4px solid var(--ink); background: var(--tile); padding: 12px; display: grid; gap: 12px; min-width: 0; }
+.amini { flex: none; position: relative; overflow: hidden; width: 30px; height: 30px; border: 3px solid var(--ink); background: var(--panel); color: var(--ink); display: grid; place-items: center; }
+.amini svg { display: block; }
+.opt .opt-txt small { display: block; font-size: 12px; color: var(--slate); }
+.opt[aria-selected="true"] .opt-txt small { color: var(--on-accent); }
+.confetti { position: fixed; z-index: 100; width: 8px; height: 8px; border: 2px solid var(--ink); pointer-events: none; }
+.ptile { position: relative; }
+.anim { --ad: 400ms; --ai: 1; }
+.anim.a-press { animation: press var(--ad) steps(2, end) var(--ai); }
+.anim.a-pulse { animation: aPulse var(--ad) steps(4, end) var(--ai); }
+.anim.a-pop { animation: aPop var(--ad) steps(4, end) var(--ai); }
+.anim.a-flash { animation: aFlash var(--ad) steps(4, end) var(--ai); }
+.anim.a-bounce { animation: aBounce var(--ad) steps(6, end) var(--ai); }
+.anim.a-jelly { animation: aJelly var(--ad) steps(6, end) var(--ai); }
+.anim.a-wiggle { animation: aWiggle var(--ad) steps(6, end) var(--ai); }
+.anim.a-shake { animation: aShake var(--ad) steps(6, end) var(--ai); }
+.anim.a-heart { animation: aHeart var(--ad) steps(6, end) var(--ai); }
+.anim.a-spin > svg:first-child, .anim.a-spin .top > svg:first-child { animation: aSpin var(--ad) steps(8, end) var(--ai); }
+.anim.a-ring { animation: aRing var(--ad) steps(4, end) var(--ai); }
+.anim.a-rainbow { animation: aRainbow var(--ad) steps(8, end) var(--ai); }
+.anim.a-scan::after { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 25%; background: currentColor; opacity: 0.25; pointer-events: none; animation: aScan var(--ad) steps(8, end) var(--ai); }
+.anim.a-fill::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: currentColor; opacity: 0.25; pointer-events: none; animation: aFill var(--ad) steps(8, end) var(--ai); }
+.anim.a-onair { animation: aOnair var(--ad) steps(2, end) var(--ai); }
+.anim.a-onair::after { content: "ON AIR"; position: absolute; right: 3px; bottom: 3px; padding: 0 4px; font-size: 10px; font-weight: 700; line-height: 15px; letter-spacing: 0.04em; color: #ffffff; background: #c93c41; border: 2px solid #1e2433; pointer-events: none; animation: aBlink var(--ad) steps(2, end) var(--ai); }
+.amini.a-onair::after { content: ""; width: 8px; height: 8px; padding: 0; right: 2px; bottom: 2px; border-width: 1px; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes aPulse { 0% { transform: scale(1); } 50% { transform: scale(1.07); } 100% { transform: scale(1); } }
+@keyframes aPop { 0% { transform: scale(0.82); } 60% { transform: scale(1.12); } 100% { transform: scale(1); } }
+@keyframes aFlash { 0%, 100% { filter: none; } 25%, 75% { filter: brightness(1.6) saturate(1.3); } 50% { filter: brightness(0.8); } }
+@keyframes aBounce { 0% { transform: translateY(0); } 30% { transform: translateY(-12px); } 50% { transform: translateY(0); } 70% { transform: translateY(-5px); } 100% { transform: translateY(0); } }
+@keyframes aJelly { 0% { transform: scale(1, 1); } 30% { transform: scale(1.12, 0.88); } 50% { transform: scale(0.9, 1.1); } 70% { transform: scale(1.05, 0.95); } 100% { transform: scale(1, 1); } }
+@keyframes aWiggle { 0%, 100% { transform: rotate(0); } 20% { transform: rotate(-5deg); } 40% { transform: rotate(5deg); } 60% { transform: rotate(-3deg); } 80% { transform: rotate(3deg); } }
+@keyframes aShake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-6px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(4px); } }
+@keyframes aHeart { 0% { transform: scale(1); } 15% { transform: scale(1.1); } 30% { transform: scale(1); } 45% { transform: scale(1.14); } 70%, 100% { transform: scale(1); } }
+@keyframes aSpin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+@keyframes aRing { 0% { box-shadow: inset 0 0 0 0 var(--sun); } 50% { box-shadow: inset 0 0 0 10px var(--sun); } 100% { box-shadow: inset 0 0 0 0 transparent; } }
+@keyframes aRainbow { from { filter: hue-rotate(0deg); } to { filter: hue-rotate(360deg); } }
+@keyframes aScan { from { transform: translateY(-100%); } to { transform: translateY(400%); } }
+@keyframes aFill { from { height: 0; } to { height: 100%; } }
+@keyframes aOnair { 0%, 100% { border-color: var(--ink); } 50% { border-color: #c93c41; box-shadow: 0 0 0 3px #c93c41; } }
+@keyframes aBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+/* Live map buttons (26-live-map.js): the map fills the button; hold it for explore mode */
+.tile.has-map, .ptile.has-map { padding: 0; }
+.lmap { position: absolute; inset: 0; display: block; overflow: hidden; z-index: 1; touch-action: none; }
+.lmap canvas { display: block; width: 100%; height: 100%; image-rendering: auto; }
+.lmap-note { position: absolute; left: 6px; bottom: 6px; padding: 1px 6px; font-size: 11px; font-weight: 700; line-height: 1.4; color: var(--ink); background: var(--panel); border: 2px solid var(--ink); white-space: nowrap; pointer-events: none; }
+.lmap-note:empty { display: none; }
+.lmap-credit { position: absolute; right: 4px; bottom: 4px; padding: 0 4px; font-size: 10px; line-height: 1.5; color: var(--ink); background: var(--panel); opacity: 0.85; pointer-events: none; }
+.lmap-ctl { position: absolute; left: 6px; top: 6px; display: flex; flex-direction: column; gap: 4px; z-index: 2; }
+.lmap-ctl-r { left: auto; right: 6px; }
+.lmap { cursor: grab; }
+.lmap:active { cursor: grabbing; }
+.lmap.free [data-follow] { background: var(--sun); }
+.lmap.no-traffic [data-traffic], .lmap.no-labels [data-labels] { opacity: 0.5; text-decoration: line-through; }
+.lmap-ctl [data-labels] { font-size: 10px; }
+.lmap-ctl button, .lmap-done { min-width: 30px; min-height: 30px; padding: 0 8px; font: inherit; font-size: 16px; font-weight: 700; color: var(--ink); background: var(--tile); border: 3px solid var(--ink); box-shadow: 2px 2px 0 var(--shadow); cursor: pointer; }
+.lmap-ctl button:hover, .lmap-done:hover { background: var(--hover); }
+.lmap-done { position: absolute; right: 6px; top: 6px; display: none; font-size: 13px; }
+/* Text screens: the SimBrief OFP and BeyondATC's radio messages (26-live-map.js) */
+.lscr { position: absolute; inset: 0; display: flex; flex-direction: column; overflow: hidden; z-index: 1; color: var(--ink); background: var(--panel); text-align: left; cursor: default; }
+.lscr-bar { display: flex; align-items: center; gap: 4px; padding: 4px 6px; border-bottom: 3px solid var(--ink); background: var(--tile); flex-wrap: wrap; }
+.lscr-t { font-family: "Pixelify Sans", "IBM Plex Mono", monospace; font-size: 13px; margin-right: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.lscr-tabs { display: flex; gap: 3px; flex-wrap: wrap; }
+.lscr-bar button { min-height: 22px; padding: 0 6px; font: inherit; font-size: 11px; font-weight: 700; color: var(--ink); background: var(--panel); border: 2px solid var(--ink); box-shadow: 2px 2px 0 var(--shadow); cursor: pointer; }
+.lscr-bar button:hover { background: var(--hover); }
+.lscr-bar button:active { transform: translate(2px, 2px); box-shadow: none; }
+.lscr-body { flex: 1; min-height: 0; margin: 0; padding: 6px 8px; overflow: auto; overscroll-behavior: contain; font: 500 11px/1.35 "IBM Plex Mono", monospace; white-space: pre; user-select: text; }
+.lscr-note { padding: 3px 8px; font-size: 11px; font-weight: 600; border-top: 2px solid var(--ink); background: var(--sun-hi, var(--tile)); }
+.lscr-note[hidden] { display: none; }
+.latc-st { flex: 1; min-width: 0; text-align: right; font-size: 11px; font-weight: 700; color: var(--slate); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.latc-list { white-space: normal; display: flex; flex-direction: column; gap: 4px; }
+.latc-l { display: block; padding: 3px 6px; border-left: 4px solid var(--sky); background: var(--tile); }
+.latc-l.me { border-left-color: var(--mint); background: color-mix(in srgb, var(--mint) 18%, var(--tile)); }
+.latc-l.traffic { border-left-color: var(--rule); opacity: 0.8; }
+.latc-l.atc-other { opacity: 0.75; }
+.latc-l b { font-family: "Pixelify Sans", "IBM Plex Mono", monospace; margin-right: 4px; }
+.latc-l mark { padding: 0 2px; color: var(--ink); background: var(--sun); }
+.latc-l mark.fq { background: var(--sky); }
+.latc-l mark.tw { background: color-mix(in srgb, var(--sun) 55%, var(--tile)); }
+/* GSX's menu: its options to tap, or its services while it's closed; PUSH with ATC's direction */
+.lgsx .lscr-bar { flex-wrap: nowrap; }
+.lgsx-sub { flex: 1; min-width: 0; font-size: 10px; font-weight: 700; color: var(--slate); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lgsx .lscr-bar button.push { background: var(--sun); }
+.lgsx .lscr-bar button.push.atc { background: var(--mint); }
+.lgsx-list { white-space: normal; display: flex; flex-direction: column; gap: 3px; padding: 4px; font-family: inherit; }
+.lgsx-list.svc { flex-direction: row; flex-wrap: wrap; align-content: flex-start; }
+.lgsx-o { display: block; width: 100%; padding: 4px 7px; text-align: left; font: 600 11px/1.25 "IBM Plex Mono", monospace; color: var(--ink); background: var(--tile); border: 2px solid var(--ink); box-shadow: 2px 2px 0 var(--shadow); cursor: pointer; }
+.lgsx-o:hover { background: var(--hover); }
+.lgsx-o:active { transform: translate(2px, 2px); box-shadow: none; }
+.lgsx-o[disabled] { opacity: 0.45; cursor: default; box-shadow: none; }
+.lgsx-list.svc .lgsx-o { width: auto; flex: 1 1 30%; font-family: "Pixelify Sans", "IBM Plex Mono", monospace; text-align: center; }
+.lgsx-o.s1 { background: var(--sun); }
+.lgsx-o.s2 { background: color-mix(in srgb, var(--mint) 55%, var(--tile)); }
+.lgsx-o.s3 { opacity: 0.45; }
+/* Spotify: now playing, the cover filling the button with the song on a strip over its bottom (a
+   tap plays or pauses, a tap on the bar seeks), and lists to play from */
+.lspot { cursor: pointer; justify-content: flex-end; background: #1e2433; }
+.lspot-cover { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.lspot-cover[hidden] { display: none; }
+/* No cover: a pixel note on the dark */
+.lspot-none { position: absolute; inset: 0 0 34% 0; display: none; background: center / 38% no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'%3E%3Cpath fill='%2356627d' d='M8 1h5v2h-3v8H9v1H8v1H3v-1H2v-3h1V8h5zM10 3h1v1h-1z'/%3E%3C/svg%3E"); }
+.lspot.no-cover .lspot-none { display: block; }
+.lspot-strip { position: relative; display: flex; flex-direction: column; gap: 2px; padding: 22% 8px 8px; color: #f7fafc;
+  background: linear-gradient(to bottom, rgba(14, 17, 27, 0) 0%, rgba(14, 17, 27, 0.72) 38%, rgba(14, 17, 27, 0.92) 100%); }
+.lspot-t, .lspot-a { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 0 #000; }
+.lspot-t { font: 700 clamp(12px, 7.5cqh, 22px)/1.15 "Pixelify Sans", "IBM Plex Mono", monospace; }
+.lspot-a { font: 600 clamp(10px, 5cqh, 15px)/1.2 "IBM Plex Mono", monospace; font-style: normal; color: #c6d3e2; }
+.lspot-a[hidden] { display: none; }
+/* A message ("Nothing playing — …") wraps rather than being cut */
+.lspot.msg .lspot-t { white-space: normal; font-size: clamp(11px, 6cqh, 18px); }
+.lspot-times { display: flex; justify-content: space-between; margin-top: 4px; font: 600 clamp(9px, 4cqh, 12px)/1 "IBM Plex Mono", monospace; color: #c6d3e2; }
+.lspot-times[hidden], .lspot-bar[hidden] { display: none; }
+.lspot-bar { position: relative; height: 8px; border: 2px solid #f7fafc; background: rgba(14, 17, 27, 0.6); }
+.lspot-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--mint); transition: width 400ms linear; }
+@media (prefers-reduced-motion: reduce) { .lspot-fill { transition: none; } }
+.lspl .lscr-bar button.on { background: var(--mint); }
+.lspl-list { white-space: normal; display: flex; flex-direction: column; gap: 3px; padding: 4px; font-family: inherit; }
+.lspl-o { display: flex; align-items: center; gap: 7px; width: 100%; padding: 3px 6px; text-align: left; color: var(--ink); background: var(--tile); border: 2px solid var(--ink); box-shadow: 2px 2px 0 var(--shadow); cursor: pointer; }
+.lspl-o:hover { background: var(--hover); }
+.lspl-o:active { transform: translate(2px, 2px); box-shadow: none; }
+.lspl-o canvas { flex: none; width: 24px; height: 24px; image-rendering: pixelated; border: 2px solid var(--ink); }
+.lspl-o span { display: flex; flex-direction: column; min-width: 0; }
+.lspl-o b, .lspl-o i { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lspl-o b { font: 700 11px/1.25 "Pixelify Sans", "IBM Plex Mono", monospace; }
+.lspl-o i { font: 600 10px/1.2 "IBM Plex Mono", monospace; font-style: normal; color: var(--slate); }
+.lspl-foot { border-bottom: 0; border-top: 3px solid var(--ink); justify-content: center; }
+.lspl-foot[hidden] { display: none; }
+.lmap-ctl [data-taxi] { display: none; font-size: 11px; }
+.lmap.has-taxi .lmap-ctl [data-taxi] { display: block; }
+.ptile .lmap-ctl button, .ptile .lmap-done { min-width: 22px; min-height: 22px; font-size: 12px; border-width: 2px; }

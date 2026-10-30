@@ -1,0 +1,16 @@
+[package]
+name = "{{id}}"
+version = "0.1.0"
+edition = "2024"
+
+# A Minniondeck plugin is a DLL built with the plugin kit (kit\, a copy of minniondeck-plugin)
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+minniondeck-plugin = { path = "kit" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

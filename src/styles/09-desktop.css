@@ -1,0 +1,91 @@
+/* App only: the window fills the browser, and messages float at the bottom */
+[hidden]:not([hidden=until-found i]) { display: none !important; }
+img { max-width: 100%; }
+html, body { height: 100%; }
+body { padding: 0; overflow: hidden; }
+.wrap { max-width: none; margin: 0; display: block; height: 100%; }
+.appwin, .appwin.appwin { height: 100vh; height: 100dvh; width: 100%; border: 0; box-shadow: none; }
+@media (max-width: 720px) { .appwin, .appwin.appwin { height: 100vh; height: 100dvh; } }
+.toast.app-toast { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 300; max-width: min(560px, calc(100vw - 32px)); min-height: 0; padding: 8px 14px; font-size: 15px; background: var(--panel); color: var(--ink); border: 3px solid var(--ink); box-shadow: 4px 4px 0 var(--shadow); pointer-events: none; }
+.toast.app-toast:empty { display: none; }
+.toast.app-toast { width: max-content; }
+.toast.app-toast span { max-width: calc(100vw - 64px); text-overflow: ellipsis; }
+/* Desktop window: the logo sprite must not swallow title bar drags */
+.titlebar [data-tauri-drag-region] * { pointer-events: none; }
+.titlebar .wbtn { cursor: default; }
+/* Window buttons light up on hover in the same flat pixel style; close turns coral */
+.titlebar .wbtn:hover { background: #e4eaf6; color: var(--shadow); }
+.titlebar .wbtn[data-win="close"]:hover { background: var(--coral); border-color: var(--coral); color: #ffffff; }
+.titlebar .wbtn:active { transform: translate(1px, 1px); }
+
+/* Settings > Appearance > Animations: Off stops every animation */
+[data-motion="off"] *, [data-motion="off"] *::before, [data-motion="off"] *::after { animation: none !important; transition: none !important; }
+/* Settings > Appearance > Button size: Small 70%, Medium 85%, Large fills the Deck */
+.appwin[data-tile="s"] #a-grid { width: 70%; justify-self: center; }
+.appwin[data-tile="m"] #a-grid { width: 85%; justify-self: center; }
+/* Settings > Appearance > Show button names */
+.appwin.no-names #a-grid .tile .lbl { display: none; }
+/* Design rule: controls are at least 40px tall */
+.switch { height: 40px; }
+.switch::after { top: 6px; }
+.switch:disabled { opacity: 0.5; cursor: not-allowed; }
+/* Settings rows that aren't ready yet */
+.soon-tag { display: inline-block; margin-left: 6px; padding: 0 6px; border: 2px solid var(--slate); color: var(--slate); font-size: 12px; font-weight: 600; vertical-align: middle; }
+.srow.soon .lab b { color: var(--slate); }
+/* Numbers in settings fields don't shift as they change */
+.sbody input, .sbody select { font-variant-numeric: tabular-nums; }
+/* Settings > Profiles and pages > Back button inside folders */
+.tile.back { font-weight: 700; justify-content: center; align-items: center; background: var(--panel); border-style: dashed; }
+/* Settings: a problem shown next to its field */
+.sbody .lab .err { display: block; color: var(--coral-dark); font-weight: 600; font-size: 14px; }
+.sbody .lab .err:empty { display: none; }
+/* Profiles page: four cards a row, sized like the rest of the app */
+.pcards { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 1000px) { .pcards { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.pcard { padding: 10px; gap: 8px; font-size: 15px; }
+.pcard .stats { font-size: 13px; }
+.pcard .field label, .pcard .cap { font-size: 13px; }
+.pcard input, .pcard select { font-size: 15px; min-height: 40px; padding: 4px 8px; }
+.ptop { display: grid; gap: 6px; justify-items: start; }
+.pcard-head { width: 100%; align-items: end; }
+.pcard-head .field { flex: 1; min-width: 0; }
+.ptools { gap: 10px; }
+/* The colour box: 20px of space around the swatches, the colour named in words */
+.pcolour { padding: 20px; border: 3px solid var(--ink); background: var(--panel); display: grid; gap: 10px; }
+.pcolour .swatch-pick { gap: 8px; }
+.pcolour .swatch-pick button { width: 40px; height: 40px; border-width: 3px; padding: 0; display: grid; place-items: center; }
+.pcolour .swatch-pick button[aria-checked="true"] { box-shadow: inset 0 0 0 3px var(--tile); }
+.pcolour .swatch-pick button:focus-visible { outline: 4px solid var(--focus); outline-offset: 2px; }
+/* Buttons under the colours: Use on its own line, Duplicate and Export side by side, Delete under them */
+.pacts { display: grid; gap: 8px; }
+.pacts .puse { width: 100%; }
+.pmore { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.pmore .btn { font-size: 14px; padding: 4px 6px; }
+.pmore .pdel { grid-column: 1 / -1; }
+/* Settings > Plugins: a plugin waiting to be installed, and the buttons beside each plugin */
+.plug-offer { display: grid; gap: 8px; padding: 12px; border: 3px solid var(--ink); background: var(--tile); }
+.plug-offer .warn { margin: 0; color: var(--coral-dark); font-weight: 600; }
+.plug-acts .row { flex-wrap: nowrap; }
+/* A plugin's settings form, under the plugin table */
+.plug-form { display: grid; gap: 12px; max-width: 520px; padding: 12px; border: 3px solid var(--ink); background: var(--tile); }
+.plug-form .field { display: grid; gap: 4px; }
+.plug-form .field input[type="password"] { flex: 1; }
+.plug-form .err:empty { display: none; }
+.mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+.pconfirm { display: grid; gap: 8px; padding: 8px; border: 3px solid var(--coral-dark); }
+/* Install from the marketplace: a small popup over the app, in the editor window's style */
+.mi-modal { z-index: 60; }
+.mi-dialog { width: min(520px, 92%); height: auto; max-height: 90%; grid-template-rows: auto minmax(0, 1fr); }
+.mi-dialog .grow { flex: 1; }
+.mi-body { display: grid; gap: 10px; padding: 14px 16px 16px; overflow-y: auto; font-size: 15px; }
+.mi-head { display: grid; gap: 4px; padding-bottom: 10px; border-bottom: 3px dashed var(--rule); }
+.mi-name { font-size: 20px; }
+.mi-status { font-weight: 700; }
+.mi-status.ok { color: var(--mint-dark); }
+.mi-body .warn { margin: 0; color: var(--coral-dark); font-weight: 600; }
+.mi-body .help { font-size: 14px; color: var(--slate); }
+.mi-bar { height: 20px; border: 3px solid var(--ink); background: var(--tile); overflow: hidden; }
+.mi-bar i { display: block; height: 100%; width: 0; background-color: var(--mint); background-image: repeating-linear-gradient(90deg, transparent 0 8px, rgba(0, 0, 0, 0.12) 8px 10px); transition: width 100ms steps(2, end); }
+.mi-bar.busy i { width: 30%; animation: miSlide 1.2s steps(10, end) infinite; }
+@keyframes miSlide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+@media (prefers-reduced-motion: reduce) { .mi-bar.busy i { animation: none; width: 100%; opacity: 0.5; } }

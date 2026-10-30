@@ -1,0 +1,114 @@
+/* Layout: daylight workshop. Board first, then the screens that explain it: macro run, editor,
+   crew status, hiring a plugin, phone pairing. Pixel unit 4px, hard offset shadows, no blur, no radius. */
+:root {
+  --ground: #dfe8f1;
+  --ground-dot: #c6d3e2;
+  --ink: #1e2433;
+  --slate: #56627d;
+  --panel: #f7fafc;
+  --tile: #ffffff;
+  --mint: #5fd0a8;
+  --mint-dark: #3aa585;
+  --sky: #7cc4ff;
+  --sky-dark: #4c97d6;
+  --lilac: #b79cff;
+  --lilac-dark: #8a6fe0;
+  --peach: #ffb38a;
+  --peach-dark: #e08a5c;
+  --coral: #ff5a5f;
+  --coral-dark: #c93c41;
+  --coral-tint: #fff1f1;
+  --sun: #ffc93c;
+  /* Roles that split apart in dark mode. In light mode they match the originals. */
+  --hover: #eef3f8;     /* tile and button hover */
+  --shadow: #1e2433;    /* hard offset shadows stay dark in both themes */
+  --eye: #1e2433;       /* pupils and mouths stay dark so faces read on eye whites */
+  --on-accent: #1e2433; /* text and glyphs on mint and other light fills */
+  --rule: #c6d3e2;      /* table row lines */
+  --focus: #4c97d6;
+  color-scheme: light;
+}
+/* Night workshop: outlines and text turn light, shadows and faces stay dark,
+   accent fills keep dark text. Follows the system setting unless the toggle picks one. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #131826;
+    --ground-dot: #222a3e;
+    --ink: #e4eaf6;
+    --slate: #a4b0c8;
+    --panel: #1c2232;
+    --tile: #262e43;
+    --hover: #313a53;
+    --shadow: #04060b;
+    --rule: #3a4560;
+    --focus: #7cc4ff;
+    --coral-tint: #3a2129;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #131826;
+  --ground-dot: #222a3e;
+  --ink: #e4eaf6;
+  --slate: #a4b0c8;
+  --panel: #1c2232;
+  --tile: #262e43;
+  --hover: #313a53;
+  --shadow: #04060b;
+  --rule: #3a4560;
+  --focus: #7cc4ff;
+  --coral-tint: #3a2129;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background-color: var(--ground);
+  background-image: radial-gradient(var(--ground-dot) 2px, transparent 2px);
+  background-size: 16px 16px;
+  color: var(--ink);
+  font: 18px/1.4 "IBM Plex Mono", "Pixelify Sans", "Trebuchet MS", sans-serif;
+  font-variant-numeric: tabular-nums;
+  padding-block: 24px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+h1, h2, h3 { margin: 0; font-weight: 700; text-wrap: balance; }
+h1 { font-size: 40px; line-height: 1.1; }
+h2 { font-size: 24px; line-height: 1.25; }
+h3 { font-size: 18px; }
+p { margin: 0; max-width: 62ch; text-wrap: pretty; }
+.wrap { max-width: 1100px; margin: 0 auto; display: grid; gap: 40px; }
+.stack { display: grid; gap: 14px; min-width: 0; align-content: start; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.muted { color: var(--slate); }
+.num { font-variant-numeric: tabular-nums; }
+.brand { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.brand h1 { margin-right: auto; }
+.theme-btn { display: inline-flex; align-items: center; gap: 8px; }
+.theme-btn svg { display: block; }
+.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 20px; align-items: start; }
+@media (max-width: 800px) { .two { grid-template-columns: minmax(0, 1fr); } }
+
+.panel { background: var(--panel); border: 4px solid var(--ink); box-shadow: 6px 6px 0 var(--shadow); padding: 16px; min-width: 0; }
+
+.btn {
+  font: inherit; font-weight: 600; font-size: 16px;
+  min-height: 40px;
+  padding: 6px 12px;
+  background: var(--tile); color: var(--ink);
+  border: 4px solid var(--ink);
+  box-shadow: 4px 4px 0 var(--shadow);
+  cursor: pointer;
+}
+.btn:hover { background: var(--hover); }
+.btn:active { transform: translate(4px, 4px); box-shadow: 0 0 0 var(--shadow); }
+.btn:focus-visible, input:focus-visible, select:focus-visible, .opt:focus-visible, .seg button:focus-visible, .seq-pick:focus-visible, .swatch-pick button:focus-visible, .icon-pick button:focus-visible { outline: 4px solid var(--focus); outline-offset: 2px; }
+.btn:disabled { opacity: 0.5; cursor: default; transform: none; box-shadow: 4px 4px 0 var(--shadow); }
+/* White on coral-dark is 5.0:1; white on the lighter coral was only 3.0:1 */
+.btn.go { background: var(--coral-dark); color: #ffffff; }
+.btn.go:hover { background: #b5353a; }
+.btn.sm { min-width: 40px; padding: 4px 8px; font-size: 15px; }
+.btn.link { box-shadow: none; border-width: 3px; min-height: 36px; padding: 2px 10px; font-size: 15px; }
+.btn[aria-pressed="true"], .tab[aria-selected="true"] { background: var(--mint); color: var(--on-accent); }
+

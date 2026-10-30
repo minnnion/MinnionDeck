@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Minniondeck</title>
+<link rel="stylesheet" href="/src/styles/index.css">
+</head>
+<body>
+<div class="wrap">
+    <div class="appwin" id="appwin">
+      <div class="titlebar" aria-hidden="true" data-tauri-drag-region>
+        <span id="a-logo" data-tauri-drag-region></span>
+        <span data-tauri-drag-region>Minniondeck</span>
+        <span class="crumb" id="a-crumb" data-tauri-drag-region></span>
+        <span class="grow" data-tauri-drag-region></span>
+        <span class="wbtn" data-win="min">_</span><span class="wbtn" data-win="max">□</span><span class="wbtn" data-win="close">✕</span>
+      </div>
+      <div class="appbody">
+        <div class="rail" role="tablist" aria-label="App sections" aria-orientation="vertical" id="a-rail"></div>
+        <div class="view" id="av-deck" role="tabpanel" aria-labelledby="ar-deck">
+          <div class="deck">
+            <aside class="side" aria-label="Profile and pages">
+              <div class="pick" id="a-prof"></div>
+              <div class="row">
+                <span class="cap" id="a-pages-cap" style="margin-right:auto">Pages</span>
+                <button type="button" class="btn link" id="a-add-page">+ Page</button>
+                <button type="button" class="btn link" id="a-add-folder">+ Folder</button>
+              </div>
+              <ul class="tree" role="tree" aria-labelledby="a-pages-cap" id="a-tree"></ul>
+              <p class="help">Double-click a name, or press F2, to rename it. New pages go into the folder you are in.</p>
+            </aside>
+            <div class="deckmain">
+              <div class="mainp" id="a-main"></div>
+              <aside class="insp" id="a-insp" aria-label="Selected button"></aside>
+            </div>
+          </div>
+        </div>
+        <div class="view" id="av-profiles" role="tabpanel" aria-labelledby="ar-profiles" hidden></div>
+        <div class="view" id="av-phones" role="tabpanel" aria-labelledby="ar-phones" hidden></div>
+        <div class="view" id="av-testing" role="tabpanel" aria-labelledby="ar-testing" hidden></div>
+        <div class="view" id="av-settings" role="tabpanel" aria-labelledby="ar-settings" hidden></div>
+      </div>
+      <div class="ed-modal" id="ed-modal" hidden>
+        <div class="ed-dialog" id="ed-dialog" role="dialog" aria-modal="true" aria-labelledby="editor-h">
+          <div class="ed-titlebar">
+            <h2 id="editor-h">Edit button</h2>
+            <div class="helper" aria-live="polite">
+              <span id="ed-mate"></span>
+              <span class="emote" id="ed-emote" aria-hidden="true">?</span>
+              <span class="says" id="ed-say"></span>
+            </div>
+            <button type="button" class="wclose" id="ed-close" aria-label="Close the editor">✕</button>
+          </div>
+          <form id="ed-form" novalidate>
+                  <div class="ed-body"><div class="two">
+              <div class="stack">
+                <h3>Look</h3>
+                <div class="preview-bg" id="ed-preview-bg"><div class="tile preview" id="ed-preview" aria-hidden="true"></div></div>
+                <div class="row">
+                  <button type="button" class="btn sm" id="ed-try">Press preview</button>
+                  <button type="button" class="btn sm" id="ed-play" aria-pressed="false">Play states</button>
+                  <span class="help" id="ed-preview-note" role="status"></span>
+                </div>
+                <details class="sect" id="sec-image">
+                  <summary><span class="sum-t">Image</span><span class="sum-v" id="sum-image"></span><span class="sum-c" aria-hidden="true"></span></summary>
+                  <div class="sect-body">
+                    <div class="field" id="ed-img-state-field">
+                      <span class="cap" id="cap-istate">For state</span>
+                      <div class="seg" id="ed-img-state" role="group" aria-labelledby="cap-istate"></div>
+                    </div>
+                    <div class="field">
+                      <span class="cap" id="cap-dsg">Button design</span>
+                      <div id="ed-dsg-area"></div>
+                    </div>
+                    <div class="field">
+                      <span class="cap" id="cap-img">Icon or picture</span>
+                      <div id="ed-img-area"></div>
+                    </div>
+                    <div class="field" id="ed-img-fit-field">
+                      <span class="cap" id="cap-ifit">Fit</span>
+                      <div class="seg" id="ed-img-fit" role="group" aria-labelledby="cap-ifit"></div>
+                    </div>
+                    <div class="row mk-tools" id="ed-img-tools"></div>
+                    <div class="adj" id="ed-adjust" hidden></div>
+                    <span class="help" id="ed-img-help"></span>
+                  </div>
+                </details>
+                <details class="sect" id="sec-gif">
+                  <summary><span class="sum-t">GIF</span><span class="sum-v" id="sum-gif"></span><span class="sum-c" aria-hidden="true"></span></summary>
+                  <div class="sect-body">
+                    <div class="field" id="ed-gif-state-field">
+                      <span class="cap" id="cap-gstate">For state</span>
+                      <div class="seg" id="ed-gif-state" role="group" aria-labelledby="cap-gstate"></div>
+                    </div>
+                    <div class="field">
+                      <span class="cap" id="cap-gif">GIF or live widget</span>
+                      <div id="ed-gif-area"></div>
+                    </div>
+                    <div class="field" id="ed-gif-place-field">
+                      <span class="cap" id="cap-gplace">Show as</span>
+                      <div class="seg" id="ed-gif-place" role="group" aria-labelledby="cap-gplace"></div>
+                    </div>
+                    <div class="field" id="ed-gif-speed-field">
+                      <span class="cap" id="cap-gspeed">Speed</span>
+                      <div class="seg" id="ed-gif-speed" role="group" aria-labelledby="cap-gspeed"></div>
+                    </div>
+                    <div class="row mk-tools" id="ed-gif-tools"></div>
+                    <span class="help" id="ed-gif-help"></span>
+                  </div>
+                </details>
+                <details class="sect" id="sec-anim" hidden>
+                  <summary><span class="sum-t">Press animation</span><span class="sum-v" id="sum-anim"></span><span class="sum-c" aria-hidden="true"></span></summary>
+                  <div class="sect-body">
+                    <div class="field">
+                      <div class="row" style="justify-content:space-between"><span class="cap" id="cap-anim">Animation</span><button type="button" class="btn sm" id="ed-anim-play">Play</button></div>
+                      <div id="ed-anim-area"></div>
+                    </div>
+                    <div class="field">
+                      <span class="cap" id="cap-speed">Speed</span>
+                      <div class="seg" id="ed-anim-speed" role="group" aria-labelledby="cap-speed"></div>
+                    </div>
+                    <div class="field">
+                      <span class="cap" id="cap-rep">Plays</span>
+                      <div class="seg" id="ed-anim-rep" role="group" aria-labelledby="cap-rep"></div>
+                      <span class="help" id="ed-anim-help"></span>
+                    </div>
+                    <div class="field">
+                      <span class="cap" id="cap-aph">Phones</span>
+                      <div class="seg" id="ed-anim-phone" role="group" aria-labelledby="cap-aph"></div>
+                    </div>
+                  </div>
+                </details>
+                <details class="sect" id="sec-states" open>
+                  <summary><span class="sum-t">States</span><span class="sum-v" id="sum-states"></span><span class="sum-c" aria-hidden="true"></span></summary>
+                  <div class="sect-body">
+                    <div class="field">
+                      <span class="cap" id="cap-states">Each press moves to the next state</span>
+                      <div class="state-strip" id="ed-state-strip" role="group" aria-labelledby="cap-states"></div>
+                      <span class="help" id="ed-states-help"></span>
+                    </div>
+                    <div class="state-card" id="ed-state-card">
+                      <div class="state-card-head">
+                        <h4 id="ed-state-title"></h4>
+                        <span class="row" id="ed-state-tools"></span>
+                      </div>
+                      <div class="two-in">
+                        <div class="field" id="ed-state-name-field">
+                          <label for="ed-state-name">State name</label>
+                          <input id="ed-state-name" maxlength="16" autocomplete="off">
+                        </div>
+                        <div class="field">
+                          <label for="ed-state-text">Text on tile</label>
+                          <input id="ed-state-text" maxlength="28" autocomplete="off">
+                        </div>
+                      </div>
+                      <div class="field">
+                        <span class="cap" id="cap-icon">Icon</span>
+                        <div id="ed-icon-area"></div>
+                      </div>
+                      <div class="field" id="ed-bg-colour-field">
+                        <span class="cap" id="cap-bg">Colour</span>
+                        <div class="cpick" id="ed-bg"></div>
+                      </div>
+                    </div>
+                  </div>
+                </details>
+                <div class="field">
+                  <span class="cap" id="cap-shape">Show</span>
+                  <div class="seg" id="ed-shape" role="group" aria-labelledby="cap-shape"></div>
+                </div>
+                <div class="field">
+                  <span class="cap" id="cap-pos">Name position</span>
+                  <div class="seg" id="ed-textpos" role="group" aria-labelledby="cap-pos"></div>
+                </div>
+              </div>
+
+              <div class="stack">
+                <h3>What it does</h3>
+                <div class="field">
+                  <label for="ed-name">Name</label>
+                  <input id="ed-name" maxlength="28" aria-describedby="err-name">
+                  <span class="err" id="err-name"></span>
+                </div>
+                <div class="field">
+                  <span class="cap" id="cap-mode">Runs</span>
+                  <div class="seg" id="ed-mode" role="group" aria-labelledby="cap-mode"></div>
+                  <span class="help" id="ed-mode-help"></span>
+                </div>
+                <div id="ed-seq" class="stack" hidden></div>
+                <div id="ed-action" class="stack"></div>
+              </div>
+            </div></div>
+
+            <div class="row ed-foot">
+              <span id="ed-delete-area"></span>
+              <span style="flex:1"></span>
+              <span class="muted" id="ed-problems"></span>
+              <button type="button" class="btn" id="ed-cancel">Undo changes</button>
+              <button type="submit" class="btn go" id="ed-save">Save button</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+</div>
+<div class="toast app-toast" id="toast" role="status" aria-live="polite"></div>
+<!-- Parts of the full mockup page that the scripts still write to. They are never shown here. -->
+<div id="offstage" hidden aria-hidden="true">
+  <span id="logo"></span><button id="theme-toggle" type="button" tabindex="-1"><span id="theme-icon"></span></button>
+  <div id="board"><div id="bench"></div><div id="grid"></div><div id="empty"><span id="empty-sprite"></span><button id="add-first" type="button" tabindex="-1"></button></div></div>
+  <button id="edit-toggle" type="button" tabindex="-1"></button>
+  <span id="macro-title"></span><button id="run-macro" type="button" tabindex="-1"></button><div id="track"></div><p id="macro-status"></p>
+  <div id="editor"><button id="ed-open-demo" type="button" tabindex="-1"></button><div id="ed-empty"></div></div>
+  <div id="crew-section"><div id="crew"></div></div>
+  <div id="hire-section"><span id="hire-sprite"></span><div id="hire-body"></div><button id="hire-yes" type="button" tabindex="-1"></button><button id="hire-no" type="button" tabindex="-1"></button></div>
+  <span id="phone-sprite"></span><span id="code"></span><span id="countdown"></span><span id="timer"></span><button id="new-code" type="button" tabindex="-1"></button>
+  <table><tbody id="states"></tbody></table><div id="swatches"></div>
+</div>
+<script src="/backend.js"></script>
+<!-- Page scripts: the files in each folder are joined in name order at build time (see vite.config.ts) -->
+<script data-concat="src/ui/core"></script>
+<!-- The app window: these files share one private scope, like the single script they came from -->
+<script data-concat="src/ui/app" data-iife></script>
+
+</body></html>

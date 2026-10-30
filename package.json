@@ -1,0 +1,21 @@
+{
+  "name": "minniondeck",
+  "private": true,
+  "version": "3.5.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2"
+  },
+  "devDependencies": {
+    "@fontsource-variable/pixelify-sans": "^5",
+    "@fontsource/ibm-plex-mono": "^5",
+    "vite": "^8.0.16",
+    "@tauri-apps/cli": "^2"
+  }
+}

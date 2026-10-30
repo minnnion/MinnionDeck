@@ -1,0 +1,59 @@
+/* ===== Pixel scrollbars. Chrome 121+ ignores ::-webkit-scrollbar once scrollbar-color is set,
+   so the standard properties only apply where the pseudo-elements don't exist (Firefox). ===== */
+::-webkit-scrollbar { width: 14px; height: 14px; }
+/* The thumb sits centred in its track: an even 3px gap on both sides, drawn with a transparent border */
+::-webkit-scrollbar-track { background-color: var(--panel); background-image: linear-gradient(90deg, transparent 6px, var(--ground-dot) 6px 8px, transparent 8px); }
+::-webkit-scrollbar-track:horizontal { background-image: linear-gradient(transparent 6px, var(--ground-dot) 6px 8px, transparent 8px); }
+::-webkit-scrollbar-thumb { background-color: var(--mint); background-clip: padding-box; border: 3px solid transparent; box-shadow: inset 0 0 0 2px var(--ink), inset -4px -4px 0 var(--mint-dark); }
+::-webkit-scrollbar-thumb:hover { background-color: var(--sky); box-shadow: inset 0 0 0 2px var(--ink), inset -4px -4px 0 var(--sky-dark); }
+::-webkit-scrollbar-thumb:active { background-color: var(--sun); box-shadow: inset 0 0 0 2px var(--ink); }
+::-webkit-scrollbar-button { display: none; }
+::-webkit-scrollbar-corner { background: var(--panel); }
+@supports not selector(::-webkit-scrollbar) { * { scrollbar-color: var(--mint-dark) var(--panel); scrollbar-width: thin; } }
+/* Space for the scrollbar is always kept, so panels never change width when content grows */
+.view, .side, .cr-lib, .cr-mid, .cr-props, .ed-body, .picker, .sbody { scrollbar-gutter: stable; }
+
+/* ===== Pixel dropdowns: every select in the app becomes one of these ===== */
+.pxsel { position: relative; display: block; min-width: 0; }
+.pxsel.inline { display: inline-block; vertical-align: middle; max-width: 100%; }
+.pxsel-native { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; pointer-events: none; }
+.pxsel-btn { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; min-height: 44px; padding: 6px 10px; font: inherit; font-size: 17px; text-align: left; background: var(--tile); color: var(--ink); border: 4px solid var(--ink); cursor: pointer; }
+.pxsel.inline .pxsel-btn { width: auto; max-width: 100%; }
+.pxsel-btn:hover { background: var(--hover); }
+.pxsel-btn:focus-visible { outline: 4px solid var(--focus); outline-offset: 2px; }
+.pxsel-btn[aria-expanded="true"] { box-shadow: 4px 4px 0 var(--shadow); }
+.pxsel-btn:disabled { color: var(--slate); cursor: default; border-style: dashed; background: var(--tile); }
+.pxsel-txt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pxsel-caret { flex: none; width: 12px; height: 9px; background: linear-gradient(currentColor, currentColor) 0 0 / 12px 3px no-repeat, linear-gradient(currentColor, currentColor) 2px 3px / 8px 3px no-repeat, linear-gradient(currentColor, currentColor) 4px 6px / 4px 3px no-repeat; transition: transform 120ms steps(2, end); }
+.pxsel-btn[aria-expanded="true"] .pxsel-caret { transform: rotate(180deg); }
+.pxsel-list { position: fixed; z-index: 200; overflow-y: auto; padding: 4px; font-size: 15px; background: var(--panel); color: var(--ink); border: 4px solid var(--ink); box-shadow: 6px 6px 0 var(--shadow); animation: dropIn 140ms steps(3, end); }
+.pxsel-list:focus { outline: none; }
+.pxsel-opt { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 4px 10px; cursor: pointer; white-space: nowrap; }
+.pxsel-opt.active { background: var(--hover); }
+.pxsel-opt[aria-selected="true"] { background: var(--mint); color: var(--on-accent); font-weight: 700; }
+.pxsel-opt[aria-selected="true"].active { background: var(--mint-dark); }
+.pxsel-opt[aria-selected="true"]::after { content: "✓"; margin-left: auto; padding-left: 12px; }
+.pxsel-opt[aria-disabled="true"] { color: var(--slate); cursor: default; }
+.ed-dialog .pxsel-btn, .creator .pxsel-btn, .pagebar .pxsel-btn, .dev .pxsel-btn, .insp .pxsel-btn { font-size: 14px; min-height: 36px; padding: 4px 8px; border-width: 3px; }
+.pcard .pxsel-btn, .srow .pxsel-btn { font-size: 15px; min-height: 40px; }
+.srow .pxsel { min-width: 180px; }
+
+/* ===== Pixel slider ===== */
+.pxs { display: grid; grid-template-columns: 70px minmax(0, 1fr) 54px; gap: 10px; align-items: center; font-size: 13px; padding-top: 4px; }
+.pxs-lab { font-weight: 600; }
+.pxs-track { position: relative; height: 16px; border: 3px solid var(--ink); background-color: var(--tile); background-image: repeating-linear-gradient(90deg, transparent 0 8px, var(--rule) 8px 10px); cursor: pointer; touch-action: none; }
+.pxs-track:focus-visible { outline: 4px solid var(--focus); outline-offset: 4px; }
+.pxs-fill { position: absolute; left: 0; top: 0; bottom: 0; background-color: var(--mint); background-image: repeating-linear-gradient(90deg, transparent 0 6px, var(--mint-dark) 6px 8px); transition: width 60ms steps(2, end); }
+.pxs-thumb { position: absolute; top: 50%; width: 16px; height: 26px; transform: translate(-50%, -50%); background: var(--tile); border: 3px solid var(--ink); box-shadow: 3px 3px 0 var(--shadow); transition: left 60ms steps(2, end); }
+.pxs-thumb i { position: absolute; left: 3px; right: 3px; top: 5px; height: 2px; background: var(--ink); box-shadow: 0 4px 0 var(--ink), 0 8px 0 var(--ink); }
+.pxs-tip { position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); padding: 1px 5px; font-size: 12px; font-weight: 700; line-height: 1.3; white-space: nowrap; background: var(--tile); color: var(--ink); border: 2px solid var(--ink); visibility: hidden; pointer-events: none; }
+.pxs.drag .pxs-tip, .pxs-track:focus-visible .pxs-tip { visibility: visible; }
+.pxs.drag .pxs-thumb { background: var(--sun); transform: translate(-50%, -50%) translate(2px, 2px); box-shadow: 1px 1px 0 var(--shadow); }
+.pxs-out { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* Segmented choices with four or more options sit in a 2 × 2 grid, so they never wrap unevenly */
+.seg.seg4 { display: grid; grid-template-columns: 1fr 1fr; }
+.seg.seg4 button { border: 0; text-align: center; }
+.seg.seg4 button:nth-child(even) { border-left: 3px solid var(--ink); }
+.seg.seg4 button:nth-child(n + 3) { border-top: 3px solid var(--ink); }
+

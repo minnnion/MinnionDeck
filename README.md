@@ -105,9 +105,8 @@ An official installer is coming and will be published under **Releases**. Minnio
 src/            Front end: plain JavaScript and CSS, in the app's own pixel style
 src-tauri/      Rust backend: actions, phones, plugins, storage, speech, maps
 plugin-kit/     Rust crate plugins are built against
-ui_app/         Standalone UI mockup of the app
-tools/          Helper scripts
-docs/           Design notes, research and the security review
+public/         Static files the app loads (airport data, backend bridge)
+docs/           Screenshots used in this README
 ```
 
 ## Security
@@ -119,7 +118,7 @@ Minniondeck is built to be safe to share profiles and plugins with:
 - Phone pairing uses 6-digit codes and 256-bit tokens from the OS random generator, with lockout after repeated tries and single-use codes.
 - Plugin passwords are encrypted with Windows DPAPI.
 
-See [`docs/security-review-2026-10-30.md`](docs/security-review-2026-10-30.md) for the full review. To report a problem, open a private security advisory on GitHub.
+To report a security problem, open a private security advisory on GitHub.
 
 ## Roadmap
 

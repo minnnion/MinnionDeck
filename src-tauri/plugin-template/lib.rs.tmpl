@@ -1,0 +1,37 @@
+//! {{name}}: a Minniondeck plugin.
+//!
+//! Each action in actions.json arrives here by its id. `press` is the only event you must handle;
+//! the others (release, long_press, shown, hidden, options, settings_changed, stop) are optional.
+//! Use `self.host` to change buttons live, log, show a message or save settings. See kit\src\lib.rs
+//! for everything the plugin kit can do.
+
+use minniondeck_plugin::{ButtonEvent, Host, Outcome, Plugin, export};
+
+struct {{type}} {
+    host: Host,
+    hellos: u32,
+}
+
+impl Plugin for {{type}} {
+    fn start(host: Host) -> Self {
+        host.log("{{name}} started");
+        {{type}} { host, hellos: 0 }
+    }
+
+    fn press(&mut self, e: &ButtonEvent) -> Outcome {
+        match e.action.as_str() {
+            "say_hello" => {
+                self.hellos += 1;
+                let who = if e.field("name").is_empty() { "world" } else { e.field("name") };
+                // A setting from manifest.json, set by the user in Settings › Plugins
+                let greeting = self.host.setting("greeting").and_then(|v| v.as_str().map(String::from)).unwrap_or_else(|| "Hi".into());
+                // Shows on the button (on the PC and on phones) until cleared
+                self.host.set_title(&e.button, format!("{greeting} {who} ({})", self.hellos));
+                Ok(format!("Said hello to {who}"))
+            }
+            other => Err(format!("{{name}} has no action called \"{other}\".")),
+        }
+    }
+}
+
+export!({{type}});

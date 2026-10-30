@@ -1,0 +1,51 @@
+# Builds {{name}}, packs it as a .mdplugin and installs it into Minniondeck, which loads it
+# straight away. Double-click build.cmd, or run:  powershell -ExecutionPolicy Bypass -File build.ps1
+#   -NoInstall   only build and pack (the .mdplugin goes in dist\)
+param([switch]$NoInstall)
+$ErrorActionPreference = "Stop"
+Set-Location $PSScriptRoot
+
+# Minniondeck.exe packs and installs. This is the copy that made the plugin; set MINNIONDECK_EXE
+# to use another one.
+$Minniondeck = if ($env:MINNIONDECK_EXE) { $env:MINNIONDECK_EXE } else { '{{exe}}' }
+if (-not (Test-Path $Minniondeck)) { throw "Minniondeck.exe isn't at $Minniondeck. Set MINNIONDECK_EXE to where it is." }
+
+# ---- Rust: the one on this PC, or install it once ----
+function Find-Cargo {
+  $c = Get-Command cargo -ErrorAction SilentlyContinue
+  if ($c) { return $c.Source }
+  $p = Join-Path $env:USERPROFILE ".cargo\bin\cargo.exe"
+  if (Test-Path $p) { return $p }
+  return $null
+}
+$cargo = Find-Cargo
+if (-not $cargo) {
+  Write-Host "Rust isn't installed on this PC. Installing it now (about 300 MB, only the first time)..."
+  # The GNU toolchain brings its own linker, so Visual Studio isn't needed
+  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+  $init = Join-Path $env:TEMP "rustup-init.exe"
+  Invoke-WebRequest "https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-gnu/rustup-init.exe" -OutFile $init -UseBasicParsing
+  & $init -y --profile minimal --default-host x86_64-pc-windows-gnu --default-toolchain stable
+  if ($LASTEXITCODE -ne 0) { throw "Installing Rust failed. The reason is above." }
+  $cargo = Find-Cargo
+  if (-not $cargo) { throw "Rust was installed, but cargo wasn't found. Open a new terminal and run build.ps1 again." }
+}
+
+# ---- Build ----
+Write-Host "Building {{name}}..."
+& $cargo build --release
+if ($LASTEXITCODE -ne 0) { throw "The build failed. The errors are above." }
+
+# ---- Pack (piping the output makes PowerShell wait for Minniondeck.exe) ----
+$out = & $Minniondeck plugin pack $PSScriptRoot | Out-String
+$code = $LASTEXITCODE
+Write-Host $out.Trim()
+if ($code -ne 0) { throw "Packing failed." }
+$pack = Get-ChildItem (Join-Path $PSScriptRoot "dist\*.mdplugin") | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if ($NoInstall) { exit 0 }
+
+# ---- Install into Minniondeck and load it ----
+$out = & $Minniondeck plugin install $pack.FullName | Out-String
+$code = $LASTEXITCODE
+Write-Host $out.Trim()
+if ($code -ne 0) { throw "Installing failed." }

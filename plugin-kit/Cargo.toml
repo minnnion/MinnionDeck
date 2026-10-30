@@ -1,0 +1,9 @@
+[package]
+name = "minniondeck-plugin"
+version = "0.3.0"
+edition = "2024"
+description = "Write Minniondeck plugins in safe Rust"
+license = "MIT"
+
+[dependencies]
+serde_json = "1"

@@ -1,0 +1,93 @@
+# {{name}}
+
+A Minniondeck plugin, written in Rust with the plugin kit.
+
+## Build and try it
+
+Double-click **build.cmd** (or run `powershell -ExecutionPolicy Bypass -File build.ps1`). It:
+
+1. installs Rust the first time, if this PC doesn't have it (about 300 MB, once);
+2. builds the plugin (`cargo build --release`);
+3. packs it as `dist\{{id}}-<version>.mdplugin`;
+4. installs it into Minniondeck, which loads it straight away (no restart).
+
+Then open a button's Edit window: **What it does → Action → {{name}}**.
+
+`build.ps1 -NoInstall` only builds and packs.
+
+## Files
+
+| File | What it is |
+| --- | --- |
+| `src\lib.rs` | The plugin: what each action does when pressed |
+| `actions.json` | The actions in the editor: id, label, group, icon, fields, states |
+| `manifest.json` | The plugin's id, name, version and DLL. Change `version` for each release |
+| `icons\` | Pictures for actions and buttons (PNG, GIF, SVG, JPG, WEBP; up to 512 KB) |
+| `gifs\` | GIFs that come with the plugin |
+| `kit\` | The plugin kit (minniondeck-plugin). Every Host feature is documented in `kit\src\lib.rs` |
+
+## actions.json
+
+```jsonc
+{
+  "id": "say_hello",              // what `e.action` is in press()
+  "label": "Say hello",           // shown in the Action list
+  "group": "{{name}}",            // the group it is listed under
+  "icon": "icons/icon.png",
+  "states": ["Off", "On"],        // optional: button states your plugin switches with set_state
+  "fields": [                     // what the Edit window asks for; read with e.field("key")
+    { "key": "name", "label": "Who to greet", "kind": "text", "def": "world" },
+    { "key": "count", "label": "How many", "kind": "number", "min": 1, "max": 10, "def": 1 },
+    { "key": "size", "label": "Size", "kind": "select", "options": ["Small", "Big"] },
+    { "key": "scene", "label": "Scene", "kind": "select", "dynamic": true }
+  ]
+}
+```
+
+A `"dynamic": true` list is filled by your plugin's `options()`; call `host.refresh_options("action")`
+when the choices change.
+
+## Settings
+
+List settings in `manifest.json` and Minniondeck shows them in **Settings › Plugins › {{name}} › Settings**:
+
+```jsonc
+"settings": [
+  { "key": "host", "label": "Address", "kind": "text", "def": "localhost", "required": true },
+  { "key": "port", "label": "Port", "kind": "number", "min": 1, "max": 65535, "def": 4455 },
+  { "key": "password", "label": "Password", "kind": "password" },
+  { "key": "auto", "label": "Connect at start", "kind": "switch", "def": true },
+  { "key": "quality", "label": "Quality", "kind": "select", "options": ["Low", "High"] },
+  { "key": "test", "label": "Test the connection", "kind": "button" }
+]
+```
+
+Read them with `self.host.setting("host")`; `settings_changed()` runs when the user saves, and a
+`button` calls `settings_button("test")`. Passwords are encrypted by Windows on disk and reach the
+plugin as plain text; Minniondeck never shows them again.
+
+## Rules
+
+- Each plugin runs on its own thread in Minniondeck's plugin helper. Do slow work (network,
+  waiting) on your own threads, and end them in `stop()`.
+- A panic is caught and shown as an error on the button; a crash restarts all plugins.
+
+## Icons and GIFs for buttons
+
+Pictures listed in `manifest.json` show up for every button, not only your actions':
+`"icons": ["icons/icon.png", …]` adds a **{{name}}** set to the icon picker, and
+`"gifs": ["gifs/spark.gif", …]` adds them to every GIF list and to the GIF library. Icons up to
+512 KB, GIFs up to 2 MB. Phones get them too.
+
+## Signing
+
+Minniondeck runs a plugin without Developer mode only when it is signed by an author that PC
+trusts. Make your author key once:
+
+    Minniondeck.exe plugin key --name "Your name"
+
+From then on `build.ps1` signs every pack. Send your `.mdkey` file to people who should trust
+your plugins; they add it in **Settings › Plugins › Trusted authors › Add an author key**. Add it
+on your own PC too. Your private key stays on your PC, locked to your Windows account.
+
+Without a key, packs are unsigned and run only with **Developer mode** on (Settings › Plugins).

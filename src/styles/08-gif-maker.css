@@ -1,0 +1,46 @@
+/* ===== Logo animations on design layers ===== */
+.dla { display: block; width: 100%; height: 100%; animation-fill-mode: both; }
+.dl-text .dla { display: inline-block; width: auto; height: auto; }
+.dl-gif .dla { overflow: hidden; }
+.la-fade { animation-name: laFade; } .la-slideup { animation-name: laSlideUp; } .la-slidein { animation-name: laSlideIn; }
+.la-pop { animation-name: laPop; } .la-drop { animation-name: laDrop; } .la-zoom { animation-name: laZoom; }
+.la-type { animation-name: laType; } .la-spin { animation-name: laSpin; } .la-bounce { animation-name: laBounce; }
+.la-float { animation-name: laFloat; } .la-pulse { animation-name: laPulse; } .la-wiggle { animation-name: laWiggle; } .la-blink { animation-name: aBlink; }
+@keyframes laFade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes laSlideUp { from { transform: translateY(70%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+@keyframes laSlideIn { from { transform: translateX(-70%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+@keyframes laPop { 0% { transform: scale(0); } 70% { transform: scale(1.18); } 100% { transform: scale(1); } }
+@keyframes laDrop { 0% { transform: translateY(-160%); } 60% { transform: translateY(10%); } 80% { transform: translateY(-5%); } 100% { transform: translateY(0); } }
+@keyframes laZoom { from { transform: scale(2.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes laType { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes laSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes laBounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-22%); } }
+@keyframes laFloat { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-9%); } }
+@keyframes laPulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.14); } }
+@keyframes laWiggle { 0%, 100% { transform: rotate(-8deg); } 50% { transform: rotate(8deg); } }
+.achips { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+.achips button { display: flex; align-items: center; gap: 6px; min-height: 34px; padding: 2px 6px; font: inherit; font-size: 12px; font-weight: 600; text-align: left; background: var(--tile); color: var(--ink); border: 3px solid var(--ink); cursor: pointer; min-width: 0; }
+.achips button[aria-pressed="true"] { background: var(--mint); color: var(--on-accent); }
+.achips button:focus-visible { outline: 3px solid var(--focus); outline-offset: 1px; }
+.achips .dot { flex: none; width: 12px; height: 12px; display: block; position: relative; }
+.achips .dot .dla { background: currentColor; }
+.achips button:not(:hover):not(:focus-visible) .dot .dla { animation-play-state: paused; }
+
+/* ===== GIF maker ===== */
+.gm-canvas { display: block; border: 4px solid var(--ink); box-shadow: 6px 6px 0 var(--shadow); cursor: crosshair; touch-action: none; image-rendering: pixelated; }
+.gm-canvas:focus-visible { outline: 4px solid var(--focus); outline-offset: 4px; }
+.gm-canvas.t-fill { cursor: cell; } .gm-canvas.t-pick { cursor: copy; }
+.gm-frames { display: flex; gap: 6px; overflow-x: auto; padding: 4px 2px 8px; scrollbar-gutter: stable; }
+.gm-frames button { flex: none; display: grid; justify-items: center; gap: 2px; padding: 3px; font: inherit; font-size: 11px; font-weight: 700; background: var(--tile); color: var(--ink); border: 3px solid var(--ink); cursor: pointer; }
+.gm-frames button[aria-pressed="true"] { background: var(--mint); color: var(--on-accent); box-shadow: 3px 3px 0 var(--shadow); }
+.gm-frames button:focus-visible { outline: 3px solid var(--focus); outline-offset: 1px; }
+.gm-frames canvas { display: block; width: 40px; height: 40px; image-rendering: pixelated; background: repeating-conic-gradient(#e9eef5 0 25%, #f7fafc 0 50%) 0 0 / 10px 10px; }
+.gm-cur { display: flex; align-items: center; gap: 10px; }
+.gm-cur span:first-child { width: 44px; height: 44px; border: 4px solid var(--ink); background: repeating-conic-gradient(#e9eef5 0 25%, #f7fafc 0 50%) 0 0 / 12px 12px; position: relative; }
+.gm-cur span:first-child i { position: absolute; inset: 0; }
+.tiles-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+.tiles-row figure { margin: 0; display: grid; gap: 4px; font-size: 13px; color: var(--slate); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

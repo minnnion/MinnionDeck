@@ -1,0 +1,179 @@
+/* ===== Edit button window: centred over the app at 90% of its size (990 × 630 in the 1100 × 700 window) ===== */
+.appwin { position: relative; }
+.ed-modal { position: absolute; inset: 0; z-index: 40; display: grid; place-items: center; background-color: rgba(19, 24, 38, 0.5); background-image: radial-gradient(rgba(4, 6, 11, 0.35) 1px, transparent 1px); background-size: 4px 4px; animation: fadeIn 160ms steps(3, end); }
+.ed-dialog { width: 90%; height: 90%; min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--panel); border: 4px solid var(--ink); box-shadow: 8px 8px 0 var(--shadow); font-size: 15px; line-height: 1.35; animation: popIn 200ms steps(3, end); }
+/* Opening: the two columns slide in one after the other. Closing: the window shrinks and fades. */
+.ed-body .two > .stack { animation: edSlide 220ms steps(4, end) backwards; }
+.ed-body .two > .stack + .stack { animation-delay: 60ms; }
+.ed-modal.closing { animation: edFadeOut 140ms steps(3, end) forwards; }
+.ed-modal.closing .ed-dialog { animation: edPopOut 140ms steps(3, end) forwards; }
+@keyframes edSlide { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes edFadeOut { from { opacity: 1; } to { opacity: 0; } }
+@keyframes edPopOut { from { transform: scale(1); } to { transform: scale(0.94); } }
+@media (max-width: 900px) { .ed-dialog { width: 94%; height: 92%; } }
+.ed-titlebar { display: flex; align-items: center; gap: 10px; padding: 6px 8px 6px 12px; background: var(--shadow); color: #e4eaf6; min-width: 0; }
+.ed-titlebar h2 { font-size: 16px; flex: none; }
+.ed-titlebar .helper { flex: 1 1 auto; gap: 6px; min-width: 0; }
+.ed-titlebar .helper .sprite { width: 24px; height: auto; }
+.ed-titlebar .helper .emote { left: 16px; top: -8px; font-size: 11px; padding: 1px 3px; border-width: 2px; }
+.ed-titlebar .says { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wclose { flex: none; width: 34px; height: 30px; font: inherit; font-size: 14px; font-weight: 700; background: transparent; color: #e4eaf6; border: 3px solid #e4eaf6; cursor: pointer; }
+.wclose:hover { background: #c93c41; }
+.wclose:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+#ed-form { display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 0; }
+.ed-body { overflow: hidden; min-height: 0; container-type: inline-size; }
+.ed-dialog .ed-body { scrollbar-gutter: auto; }
+/* Each column scrolls on its own, so "What it does" never scrolls away while you work on the look.
+   The two columns are the same width. */
+.ed-body .two { height: 100%; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); align-items: stretch; }
+.ed-body .two > .stack { min-height: 0; overflow-y: auto; scrollbar-gutter: stable; padding: 12px 14px 16px; grid-auto-rows: max-content; }
+.ed-body .two > .stack + .stack { border-left: 3px solid var(--rule); }
+/* A narrow window falls back to one column that scrolls as a whole */
+@container (max-width: 560px) {
+  .ed-body .two { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; overflow-y: auto; }
+  .ed-body .two > .stack { overflow: visible; }
+  .ed-body .two > .stack + .stack { border-left: 0; border-top: 3px solid var(--rule); }
+}
+.ed-dialog .ed-foot { margin: 0; padding: 8px 12px; border-top: 3px solid var(--ink); background: var(--panel); }
+/* Text and controls scaled for the smaller window. Text boxes, buttons and segmented
+   choices share one 36px height so rows of controls line up. */
+.ed-dialog .two { gap: 0; }
+.ed-dialog .stack { gap: 10px; }
+.ed-dialog h3 { font-size: 15px; }
+.ed-dialog h4 { font-size: 14px; }
+.ed-dialog .cap, .ed-dialog .field > label { font-size: 13px; }
+.ed-dialog .help, .ed-dialog .field .help, .ed-dialog .icon-note, .ed-dialog .cp-note, .ed-dialog #ed-problems, .ed-dialog .confirm { font-size: 13px; }
+.ed-dialog .field .err { font-size: 13px; }
+.ed-dialog input, .ed-dialog select { font-size: 14px; min-height: 36px; padding: 4px 8px; border-width: 3px; }
+.ed-dialog .btn { font-size: 13px; min-height: 36px; padding: 4px 10px; border-width: 3px; box-shadow: 3px 3px 0 var(--shadow); }
+.ed-dialog .btn:active { box-shadow: 0 0 0 var(--shadow); transform: translate(3px, 3px); }
+.ed-dialog .btn.sm { min-width: 34px; padding: 2px 8px; }
+/* Option bars fill their row, and their buttons share it evenly, so no bar ends in empty space.
+   Labels stay on one line; a longer one just gets a wider button. Bars that list state names
+   (which can be long) let a name wrap instead. */
+.ed-dialog .seg { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(max-content, 1fr); width: 100%; border-width: 3px; }
+.ed-dialog .seg[id$="-state"] { grid-auto-columns: minmax(min-content, 1fr); }
+.ed-dialog .seg button { font-size: 13px; min-height: 30px; padding: 3px 9px; text-align: center; }
+.ed-dialog .seg button + button { border-left-width: 3px; }
+/* The preview stays pinned at the top while you scroll, so you always see the animation play */
+/* Look: every state of the button, beside the preview so the pinned area stays short;
+   the chosen one is outlined. A wide preview pushes them underneath. */
+.ed-dialog .preview-bg { display: flex; flex-wrap: nowrap; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-width: 3px; position: sticky; top: -12px; z-index: 4; box-shadow: 0 -12px 0 var(--panel); }
+.ed-dialog .preview-bg > .tile.preview { flex: 0 1 auto; width: 100%; min-width: 0; }
+/* The states stand in a column at the right; more than four start a second column */
+.pstates { flex: none; display: flex; flex-direction: column; flex-wrap: wrap; align-content: flex-end; gap: 4px; max-height: 168px; }
+.pstates[hidden] { display: none; }
+.pstate { display: flex; align-items: center; gap: 6px; padding: 2px 6px 2px 2px; background: none; border: 3px solid transparent; cursor: pointer; font: inherit; color: var(--ink); text-align: left; transition: transform 120ms steps(2, end); }
+.pstate:hover { transform: translateX(-2px); }
+.pstate[aria-pressed="true"] { border-color: var(--coral-dark); }
+.pstate:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+.pstate .tile.mini { flex: none; width: 48px; height: 32px; font-size: 8px; padding: 2px 3px 3px; pointer-events: none; }
+.pstate small { font-size: 12px; width: 84px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Sections and dropdowns ease open; the arrow turns with them */
+.sum-c { transition: transform 140ms steps(2, end); }
+.ed-dialog .tile.preview { font-size: 13px; padding: 6px 8px 8px; }
+.ed-dialog .state-chip { min-height: 38px; font-size: 13px; border-width: 3px; padding: 3px 9px 3px 3px; }
+.ed-dialog .state-chip .sw { width: 26px; height: 26px; }
+.ed-dialog .state-chip .n { font-size: 11px; }
+.ed-dialog .state-card, .ed-dialog .anim-card { padding: 10px; gap: 10px; border-width: 3px; }
+.ed-dialog .pick-btn { min-height: 44px; font-size: 14px; padding: 4px 8px 4px 6px; border-width: 3px; }
+.ed-dialog .pick-txt small { font-size: 12px; }
+.ed-dialog .act-ico { width: 26px; height: 26px; border-width: 2px; }
+.ed-dialog .opt { font-size: 14px; min-height: 38px; padding: 4px 10px; }
+.ed-dialog .picker { max-height: 230px; border-width: 3px; }
+.ed-dialog .picker .grp { font-size: 13px; padding: 4px 8px; }
+.ed-dialog .picker .grp .grp-path { font-size: 12px; }
+.ed-dialog .seq-pick { font-size: 14px; min-height: 42px; padding: 4px 8px; border-width: 3px; }
+.ed-dialog .seq-pick small { font-size: 12px; }
+.ed-dialog .cpick .presets { grid-template-columns: repeat(auto-fill, minmax(28px, 1fr)); gap: 5px; }
+.ed-dialog .cpick .presets button { min-width: 28px; min-height: 28px; border-width: 3px; }
+.ed-dialog .cpick .custom-btn { font-size: 16px; }
+.ed-dialog .cp-panel { padding: 8px; border-width: 3px; }
+.ed-dialog .sv { height: 110px; }
+.ed-dialog .cp-prev { width: 36px; height: 36px; border-width: 3px; }
+.ed-dialog .cp-row .hex { width: 110px; }
+.ed-dialog .icon-cells { grid-template-columns: repeat(auto-fill, minmax(62px, 1fr)); }
+.ed-dialog .icell { min-height: 58px; font-size: 11px; }
+.ed-dialog .warn { padding: 6px 8px; border-width: 3px; font-size: 13px; }
+.ed-dialog .unit span { font-size: 14px; }
+
+/* ===== Drop-down sections in the editor's Look column ===== */
+.sect { border: 4px solid var(--ink); background: var(--tile); min-width: 0; }
+.sect > summary { list-style: none; display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px 10px; cursor: pointer; font-weight: 700; }
+.sect > summary::-webkit-details-marker { display: none; }
+.sect > summary:hover { background: var(--hover); }
+.sect > summary:focus-visible { outline: 4px solid var(--focus); outline-offset: 2px; }
+.sect[open] > summary { border-bottom: 3px solid var(--ink); }
+.sum-t { flex: none; }
+.sum-v { flex: 1; min-width: 0; text-align: right; font-weight: 400; font-size: 0.9em; color: var(--slate); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sum-c { flex: none; width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 7px solid currentColor; }
+.sect[open] > summary .sum-c { transform: rotate(180deg); }
+.sect-body { padding: 10px; display: grid; gap: 12px; min-width: 0; animation: dropIn 160ms steps(4, end); }
+.ed-dialog .sect { border-width: 3px; }
+.ed-dialog .sect > summary { font-size: 14px; min-height: 40px; }
+
+/* ===== GIFs and live widgets on buttons ===== */
+.gif-bg { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+.gif-strip { display: block; height: 100%; animation-name: gifRun; animation-iteration-count: infinite; }
+.gif-ico { flex: none; display: block; overflow: hidden; }
+.gif-file { display: block; width: 100%; height: 100%; object-fit: cover; image-rendering: pixelated; }
+.gpick-more { margin-top: 8px; }
+.packs { display: grid; gap: 6px; }
+.pack { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 8px; padding: 6px 6px 8px 8px; border: 2px solid var(--ink); background: var(--panel); }
+.pack b { font-weight: 700; }
+.pack small { grid-column: 1 / -1; color: var(--ink-soft); line-height: 1.35; }
+.tile > .top, .tile > .lbl, .tile > .wdg, .ptile > :not(.gif-bg) { position: relative; z-index: 1; }
+.tile .handle, .tile .rz { z-index: 2; }
+.tile.has-gif .lbl, .ptile.has-gif .pl { align-self: flex-start; background: rgba(19, 24, 38, 0.78); color: #ffffff; padding: 0 4px; }
+.tile.has-gif .top > svg { filter: drop-shadow(1px 1px 0 rgba(19, 24, 38, 0.6)); }
+.wdg { container-type: size; flex: 1 1 0; min-height: 0; display: grid; place-content: center; justify-items: center; line-height: 1.05; text-align: center; overflow: hidden; width: 100%; }
+.wdg b { font-size: clamp(10px, min(44cqh, 22cqw), 34px); font-weight: 700; font-variant-numeric: tabular-nums; }
+.wdg small { font-size: clamp(7px, min(22cqh, 11cqw), 12px); font-weight: 700; letter-spacing: 0.06em; }
+.wdg svg { width: clamp(10px, 34cqh, 24px); height: auto; }
+.ptile.has-wdg { grid-template-rows: minmax(0, 1fr) auto; }
+/* On a button, a widget gets the whole face: badges float in the corner, text sits left like a phone widget */
+.tile.has-wdg > .top { position: absolute; top: 6px; right: 8px; left: auto; }
+.tile.has-wdg .wdg { place-content: center start; justify-items: start; text-align: left; padding-right: 4px; }
+.tile.has-wdg.icon-only .wdg { place-content: center; justify-items: center; text-align: center; }
+.ptile .wdg { height: 100%; }
+.gmini .wdg { height: 100%; }
+.wdg .live { color: #c93c41; }
+.wdg svg { display: block; }
+.wbar { display: block; width: 70%; height: 7px; margin-top: 3px; border: 2px solid currentColor; }
+.wbar i { display: block; height: 100%; background: currentColor; }
+.mq { display: block; width: 100%; max-width: 100%; overflow: hidden; white-space: nowrap; font-size: clamp(9px, 13cqmin, 14px); font-weight: 700; }
+.mq span { display: inline-block; padding-left: 100%; animation: marquee 7s steps(70, end) infinite; }
+.eqm { display: flex; gap: 2px; align-items: flex-end; height: 14px; margin-top: 3px; }
+.eqm i { width: 4px; height: 4px; background: currentColor; animation: eqb 600ms steps(3, end) infinite alternate; }
+.eqm i:nth-child(2) { animation-delay: -200ms; } .eqm i:nth-child(3) { animation-delay: -400ms; } .eqm i:nth-child(4) { animation-delay: -100ms; }
+.gmini { flex: none; position: relative; overflow: hidden; width: 48px; height: 36px; border: 3px solid var(--ink); background: var(--panel); color: var(--ink); display: grid; place-items: center; }
+.gmini .wbar, .gmini .eqm { display: none; }
+@keyframes gifRun { from { transform: translateX(0); } to { transform: translateX(-100%); } }
+@keyframes marquee { to { transform: translateX(-100%); } }
+@keyframes eqb { from { height: 3px; } to { height: 14px; } }
+
+/* Image and GIF sections: Edit, Make and Import, and the Make menu */
+.mk-tools { gap: 8px; flex-wrap: wrap; }
+.mk-menu { position: relative; display: inline-block; }
+.mk-pop { position: absolute; left: 0; top: calc(100% + 4px); z-index: 30; width: 240px; display: grid; padding: 4px; background: var(--panel); border: 3px solid var(--ink); box-shadow: 4px 4px 0 var(--shadow); }
+.mk-pop .opt { width: 100%; font: inherit; text-align: left; background: none; border: 0; cursor: pointer; color: var(--ink); }
+.mk-pop .opt:hover, .mk-pop .opt:focus-visible { background: var(--hover); }
+.imini { background: var(--panel) center / cover no-repeat; image-rendering: pixelated; }
+
+/* Image section: the icon list's picture cells, "Show all", and Adjust */
+.icell .im-thumb { background: var(--panel) center / cover no-repeat; image-rendering: pixelated; }
+.ic-more { margin: 0 6px 6px; }
+.adj { display: grid; gap: 12px; padding: 10px; border: 3px solid var(--ink); background: var(--panel); min-width: 0; animation: dropIn 160ms steps(4, end); }
+.adj-head { display: grid; gap: 6px; min-width: 0; }
+.adj-sliders { display: grid; gap: 6px; }
+.adj .sw-row { display: flex; flex-wrap: wrap; gap: 5px; }
+.adj .sw-row button, .adj .sw-row label { width: 26px; height: 26px; padding: 0; border: 3px solid var(--ink); cursor: pointer; position: relative; display: block; }
+.adj .sw-row button[aria-pressed="true"] { box-shadow: inset 0 0 0 2px var(--tile), inset 0 0 0 4px var(--ink); }
+.adj .sw-row button:focus-visible, .adj .sw-row label:focus-within { outline: 4px solid var(--focus); outline-offset: 2px; }
+.adj .sw-row label { background: linear-gradient(90deg, #ff5a5f 0 25%, #ffc93c 25% 50%, #5fd0a8 50% 75%, #7cc4ff 75% 100%); }
+.adj .sw-row label input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; min-height: 0; cursor: pointer; }
+.adj-add { border-top: 2px solid var(--rule); padding-top: 10px; }
+
+/* The Program box while a file is dragged over the window */
+.drop-field.drop-on input { border-style: dashed; border-color: var(--ink); background: var(--mint); color: var(--on-accent); }
+.drop-field.drop-on label::after { content: " · drop it here"; color: var(--slate); font-weight: 500; }

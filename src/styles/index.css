@@ -1,0 +1,11 @@
+/* All app styles, in cascade order. Order matters: later files override earlier ones. */
+@import "../fonts.css";
+@import "./01-base.css";
+@import "./02-components.css";
+@import "./03-app-window.css";
+@import "./04-edit-window.css";
+@import "./05-tiles.css";
+@import "./06-creator.css";
+@import "./07-controls.css";
+@import "./08-gif-maker.css";
+@import "./09-desktop.css";

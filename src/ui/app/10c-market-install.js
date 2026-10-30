@@ -2,7 +2,7 @@
   // The website's Install button opens a minniondeck://install?id=… link (see market.rs). A popup
   // shows the plugin from the marketplace list, downloads it from GitHub with a progress bar, and
   // asks before installing it. A second link while it is open replaces it.
-  const MI = { link: "", step: "", info: null, pack: null, path: "", error: "", got: 0, total: 0, run: 0 };
+  const MI = { link: "", step: "", info: null, pack: null, path: "", error: "", profileError: "", got: 0, total: 0, run: 0 };
   let miModal = null, miReturn = null;
 
   const mb = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
@@ -56,7 +56,7 @@
     if (MI.step === "get") backend.call("market_cancel");
     miDiscard();
     const run = ++MI.run;
-    Object.assign(MI, { link, step: "look", info: null, pack: null, error: "", got: 0, total: 0 });
+    Object.assign(MI, { link, step: "look", info: null, pack: null, error: "", profileError: "", got: 0, total: 0 });
     if (miModal.hidden) { miReturn = document.activeElement; miModal.hidden = false; }
     backend.showWindow();
     miRender();
@@ -99,6 +99,29 @@
     await loadPluginConfig();
     if (A.view === "settings") renderSettings();
     miRender();
+  }
+
+  // The profile that comes with the plugin: downloaded, checked, then opened by the same import as a
+  // double-clicked profile file
+  async function miProfile() {
+    const run = MI.run;
+    let path = "";
+    MI.step = "pbusy";
+    MI.profileError = "";
+    miRender();
+    try {
+      path = await backend.run("market_profile_download", { link: MI.link });
+      if (run !== MI.run) return;
+      miClose();
+      await importProfileFile(path);
+    } catch (e) {
+      if (run !== MI.run) return;
+      MI.step = "done";
+      MI.profileError = String(e);
+      miRender();
+    } finally {
+      if (path) backend.call("market_discard", { path });
+    }
   }
 
   // Progress for the download in the popup; only the bar and its words change
@@ -160,9 +183,20 @@
     } else if (MI.step === "done") {
       body.append(el("p", { className: "mi-status ok", textContent: `${i.name} ${i.version} is installed. Its keys are in the action list.` }));
       const open = btn("Open Plugins", "btn", () => { miClose(); window.openPluginSettings(); });
-      const ok = btn("Done", "btn go", miClose);
-      body.append(row(ok, open));
-      setTimeout(() => ok.focus(), 30);
+      if (i.profile) {
+        const n = i.profile.pages;
+        body.append(el("p", { className: "help", textContent: `It comes with a ready-made profile: ${i.profile.name} (${n} ${n === 1 ? "page" : "pages"}). Add it to your profiles?` }));
+        if (MI.profileError) body.append(el("p", { className: "warn", textContent: MI.profileError }));
+        const add = btn("Add the profile", "btn go", miProfile);
+        body.append(row(add, btn("Not now", "btn", miClose), open));
+        setTimeout(() => add.focus(), 30);
+      } else {
+        const ok = btn("Done", "btn go", miClose);
+        body.append(row(ok, open));
+        setTimeout(() => ok.focus(), 30);
+      }
+    } else if (MI.step === "pbusy") {
+      body.append(el("p", { className: "mi-status", textContent: "Getting the profile…" }), el("div", { className: "mi-bar busy" }, [el("i")]));
     } else if (MI.step === "err") {
       body.append(el("p", { className: "warn", textContent: MI.error }));
       const again = btn("Try again", "btn go", () => openInstallLink(MI.link));

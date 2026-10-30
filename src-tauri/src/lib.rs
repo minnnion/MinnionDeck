@@ -170,6 +170,7 @@ pub fn run() {
             plugins::pick_plugin_file,
             market::market_lookup,
             market::market_download,
+            market::market_profile_download,
             market::market_cancel,
             market::market_discard,
             market::open_site,

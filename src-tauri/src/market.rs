@@ -38,6 +38,11 @@ fn index_url() -> String {
     format!("https://raw.githubusercontent.com/{GITHUB_OWNER}/{REPO}/main/index.json")
 }
 
+/// Where a plugin's profile file is: next to its versions, in plugins/<id>/
+fn profile_url(id: &str, file: &str) -> String {
+    format!("https://raw.githubusercontent.com/{GITHUB_OWNER}/{REPO}/main/plugins/{id}/{file}")
+}
+
 /// Where a plugin version's file is: plugins/<id>/<id>-<version>.mdplugin on the main branch
 fn file_url(id: &str, version: &str) -> String {
     format!("https://raw.githubusercontent.com/{GITHUB_OWNER}/{REPO}/main/plugins/{id}/{id}-{version}.mdplugin")
@@ -133,6 +138,9 @@ struct Entry {
     sha256: String,
     #[serde(default)]
     versions: Vec<Version>,
+    /// A ready-made profile that comes with the plugin, in the plugin's folder
+    #[serde(default)]
+    profile: Option<ProfileFile>,
 }
 
 #[derive(Deserialize)]
@@ -140,6 +148,38 @@ struct Version {
     v: String,
     size: u64,
     sha256: String,
+}
+
+/// The profile file a plugin ships with: its name in the plugin's folder, and the size and SHA-256 to check
+#[derive(Deserialize)]
+struct ProfileFile {
+    name: String,
+    file: String,
+    #[serde(default)]
+    pages: u32,
+    size: u64,
+    sha256: String,
+}
+
+/// A profile as the popup shows it
+#[derive(Serialize)]
+pub struct ProfileInfo {
+    name: String,
+    pages: u32,
+    size: u64,
+}
+
+/// Profiles are small; anything bigger is refused whatever the list says
+const MAX_PROFILE_BYTES: u64 = 50 * 1024 * 1024;
+
+/// A usable profile entry: a plain file name ending .mdprofile, a sane size and a full SHA-256
+fn profile_ok(p: &ProfileFile) -> bool {
+    crate::plugins::safe_name(&p.file)
+        && p.file.ends_with(".mdprofile")
+        && p.size > 0
+        && p.size <= MAX_PROFILE_BYTES
+        && p.sha256.len() == 64
+        && p.sha256.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 impl Entry {
@@ -168,6 +208,8 @@ pub struct Found {
     size: u64,
     /// The version already installed, if any
     installed: Option<String>,
+    /// The profile that comes with the plugin, if it has one
+    profile: Option<ProfileInfo>,
 }
 
 fn agent() -> ureq::Agent {
@@ -218,7 +260,9 @@ pub async fn market_lookup(link: String) -> Result<Found, String> {
     let root = crate::plugins::data_root()?;
     tauri::async_runtime::spawn_blocking(move || {
         let (e, version, size, _) = find(fetch_index()?, &link)?;
+        let profile = e.profile.as_ref().filter(|p| profile_ok(p)).map(|p| ProfileInfo { name: p.name.chars().take(40).collect(), pages: p.pages, size: p.size });
         Ok(Found {
+            profile,
             installed: installed_version(&root, &e.id),
             keys: e.actions.len(),
             id: e.id,
@@ -308,6 +352,35 @@ pub async fn market_download(app: AppHandle, link: String) -> Result<String, Str
     .map_err(|e| e.to_string())?
 }
 
+/// Download the profile that comes with a plugin and check it. The answer is the file's path, for the
+/// import that opens the profile in the app.
+#[tauri::command]
+pub async fn market_profile_download(link: String) -> Result<String, String> {
+    let link = parse_link(&link).ok_or("That isn't a Minniondeck install link.")?;
+    let root = crate::plugins::data_root()?;
+    let mine = DOWNLOAD.fetch_add(1, Ordering::SeqCst) + 1;
+    tauri::async_runtime::spawn_blocking(move || {
+        let (e, _, _, _) = find(fetch_index()?, &link)?;
+        let p = e.profile.filter(profile_ok).ok_or("This plugin doesn't come with a profile.")?;
+        let dir = downloads_dir(&root);
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let file = dir.join(format!("{}-profile.mdprofile", e.id));
+        let resp = agent().get(&profile_url(&e.id, &p.file)).call().map_err(|err| match err {
+            ureq::Error::Status(404, _) => format!("The {} profile isn't in the marketplace's plugins folder yet.", p.name),
+            ureq::Error::Status(code, _) => format!("GitHub didn't send the profile (it answered {code})."),
+            _ => "Couldn't reach GitHub. Check your internet connection and try again.".to_string(),
+        })?;
+        if let Err(err) = save_checked(resp.into_reader(), &file, p.size, &p.sha256.to_ascii_lowercase(), mine, |_| {}) {
+            let _ = fs::remove_file(&file);
+            return Err(err);
+        }
+        crate::applog::line(&format!("Downloaded the profile of plugin {} from GitHub", e.id));
+        Ok(file.display().to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// The website's address for one of its pages. GIFs and button pictures are made there now and
 /// come into the app with Import in the Edit button window.
 fn site_url(page: &str) -> Option<String> {
@@ -376,6 +449,24 @@ mod tests {
             format!("https://raw.githubusercontent.com/{GITHUB_OWNER}/{REPO}/main/plugins/minnion_spotify/minnion_spotify-0.2.1.mdplugin")
         );
         assert!(index_url().starts_with("https://raw.githubusercontent.com/"));
+    }
+
+    #[test]
+    fn a_plugins_profile_comes_from_its_own_folder_and_is_checked() {
+        assert_eq!(
+            profile_url("minnion_spotify", "Spotify.mdprofile"),
+            format!("https://raw.githubusercontent.com/{GITHUB_OWNER}/{REPO}/main/plugins/minnion_spotify/Spotify.mdprofile")
+        );
+        let ok = |file: &str, size: u64, sha: &str| profile_ok(&ProfileFile { name: "P".into(), file: file.into(), pages: 1, size, sha256: sha.into() });
+        let sha = "a".repeat(64);
+        assert!(ok("Spotify.mdprofile", 10, &sha));
+        assert!(!ok("../Spotify.mdprofile", 10, &sha));
+        assert!(!ok("Spotify.mdplugin", 10, &sha));
+        assert!(!ok("a/b.mdprofile", 10, &sha));
+        assert!(!ok(".hidden.mdprofile", 10, &sha));
+        assert!(!ok("Spotify.mdprofile", 0, &sha));
+        assert!(!ok("Spotify.mdprofile", MAX_PROFILE_BYTES + 1, &sha));
+        assert!(!ok("Spotify.mdprofile", 10, "abc"));
     }
 
     #[test]

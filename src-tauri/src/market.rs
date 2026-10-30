@@ -21,9 +21,9 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
 
 /// The GitHub account that holds the marketplace repository
-pub const GITHUB_OWNER: &str = "minniondeck";
-/// The repository with index.json on its main branch and every plugin file in its Releases
-const REPO: &str = "minniondeck-content";
+pub const GITHUB_OWNER: &str = "minnnion";
+/// The MinnionDeck Marketplace: index.json on its main branch and every plugin file in its Releases
+const REPO: &str = "MinnionDeck-Marketplace";
 /// The link scheme the website's Install button uses
 pub const SCHEME: &str = "minniondeck";
 

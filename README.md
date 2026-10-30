@@ -11,7 +11,7 @@ Built for **Microsoft Flight Simulator 2024** first, with plugins for everything
 ![License](https://img.shields.io/badge/license-source--available-5fd0a8)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-7cc4ff)
 ![Built with](https://img.shields.io/badge/built%20with-Tauri%202%20%C2%B7%20Rust%20%C2%B7%20JS-b79cff)
-![Version](https://img.shields.io/badge/version-3.5.1-ffc93c)
+![Version](https://img.shields.io/badge/version-1.0.1-ffc93c)
 
 <img src="docs/screenshots/deck.png" alt="The Minniondeck desktop app showing a flight-sim profile" width="860">
 

@@ -3,7 +3,7 @@
 // The website's Install button opens a minniondeck://install?id=<plugin id>&v=<version> link.
 // Windows starts Minniondeck with it (or hands it to the running copy, see lib.rs), and the UI
 // shows a popup: Minniondeck looks the plugin up in the marketplace's index.json on GitHub,
-// downloads its .mdplugin from GitHub Releases, checks the SHA-256 the index gives, and then asks
+// downloads its .mdplugin from the marketplace's plugins folder on GitHub, checks the SHA-256 the index gives, and then asks
 // before installing it, as it does for a double-clicked file.
 //
 // A link only names a plugin and a version. Where the list and the files come from is fixed here,
@@ -22,7 +22,7 @@ use tauri::{AppHandle, Emitter};
 
 /// The GitHub account that holds the marketplace repository
 pub const GITHUB_OWNER: &str = "minnnion";
-/// The MinnionDeck Marketplace: index.json on its main branch and every plugin file in its Releases
+/// The Minnion Marketplace: index.json on its main branch and every plugin file in its plugins/ folder
 const REPO: &str = "Minnion-Marketplace";
 /// The link scheme the website's Install button uses
 pub const SCHEME: &str = "minniondeck";
@@ -38,9 +38,9 @@ fn index_url() -> String {
     format!("https://raw.githubusercontent.com/{GITHUB_OWNER}/{REPO}/main/index.json")
 }
 
-/// Where a plugin version's file is: a release named <id>-v<version> holding <id>-<version>.mdplugin
+/// Where a plugin version's file is: plugins/<id>/<id>-<version>.mdplugin on the main branch
 fn file_url(id: &str, version: &str) -> String {
-    format!("https://github.com/{GITHUB_OWNER}/{REPO}/releases/download/{id}-v{version}/{id}-{version}.mdplugin")
+    format!("https://raw.githubusercontent.com/{GITHUB_OWNER}/{REPO}/main/plugins/{id}/{id}-{version}.mdplugin")
 }
 
 /// What an install link asks for
@@ -268,7 +268,7 @@ fn save_checked(mut from: impl Read, to: &Path, size: u64, sha: &str, mine: u64,
     out.flush().map_err(|e| e.to_string())
 }
 
-/// Download a plugin from GitHub Releases and check it. Progress goes out as market_progress
+/// Download a plugin from the marketplace's plugins folder and check it. Progress goes out as market_progress
 /// events; the answer is the file's path, for inspect_plugin and install_plugin.
 #[tauri::command]
 pub async fn market_download(app: AppHandle, link: String) -> Result<String, String> {
@@ -280,9 +280,9 @@ pub async fn market_download(app: AppHandle, link: String) -> Result<String, Str
         let dir = downloads_dir(&root);
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let file = dir.join(format!("{}-{version}.mdplugin", e.id));
-        // GitHub sends release files on from its own download host; that redirect is followed
+        // The file is read straight from the repository; a redirect, if GitHub sends one, is followed
         let resp = agent().get(&file_url(&e.id, &version)).call().map_err(|err| match err {
-            ureq::Error::Status(404, _) => format!("{} {version} isn't on GitHub Releases yet.", e.name),
+            ureq::Error::Status(404, _) => format!("{} {version} isn't in the marketplace's plugins folder yet.", e.name),
             ureq::Error::Status(code, _) => format!("GitHub didn't send the file (it answered {code})."),
             _ => "Couldn't reach GitHub. Check your internet connection and try again.".to_string(),
         })?;
@@ -373,7 +373,7 @@ mod tests {
     fn files_come_from_the_marketplace_repository_only() {
         assert_eq!(
             file_url("minnion_spotify", "0.2.1"),
-            format!("https://github.com/{GITHUB_OWNER}/{REPO}/releases/download/minnion_spotify-v0.2.1/minnion_spotify-0.2.1.mdplugin")
+            format!("https://raw.githubusercontent.com/{GITHUB_OWNER}/{REPO}/main/plugins/minnion_spotify/minnion_spotify-0.2.1.mdplugin")
         );
         assert!(index_url().starts_with("https://raw.githubusercontent.com/"));
     }

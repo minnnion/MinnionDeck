@@ -23,7 +23,7 @@ pub const SIG_FILE: &str = "signature.json";
 
 /// Authors whose plugins run on every copy of Minniondeck without Developer mode. To add one,
 /// they run `Minniondeck.exe plugin key` and send their .mdkey file; copy its name and key here.
-pub const BUILT_IN: &[(&str, &str)] = &[];
+pub const BUILT_IN: &[(&str, &str)] = &[("Minniondeck", "2cfPLPsoukI1rpnbvbrmiU7y+vnC8Bc5bSNzFFswy1Y=")];
 
 const B64: base64::engine::GeneralPurpose = base64::engine::general_purpose::STANDARD;
 

@@ -23,7 +23,7 @@ use tauri::{AppHandle, Emitter};
 /// The GitHub account that holds the marketplace repository
 pub const GITHUB_OWNER: &str = "minnnion";
 /// The MinnionDeck Marketplace: index.json on its main branch and every plugin file in its Releases
-const REPO: &str = "MinnionDeck-Marketplace";
+const REPO: &str = "Minnion-Marketplace";
 /// The link scheme the website's Install button uses
 pub const SCHEME: &str = "minniondeck";
 

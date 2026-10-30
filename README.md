@@ -8,7 +8,7 @@
 Press a button on the phone, and something happens on your PC, in your flight sim, or in the app in front.
 Built for **Microsoft Flight Simulator 2024** first, with plugins for everything else.
 
-![License](https://img.shields.io/badge/license-MIT-5fd0a8)
+![License](https://img.shields.io/badge/license-source--available-5fd0a8)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-7cc4ff)
 ![Built with](https://img.shields.io/badge/built%20with-Tauri%202%20%C2%B7%20Rust%20%C2%B7%20JS-b79cff)
 ![Version](https://img.shields.io/badge/version-3.5.1-ffc93c)
@@ -93,31 +93,11 @@ The in-app **Plugin Store** will list official and community plugins live from G
 <img src="docs/screenshots/plugin-store.png" alt="Plugin Store design preview" width="420">
 </div>
 
-## Getting started
+## Download
 
-### Requirements
-- Windows 10 or 11 (64-bit)
-- [Node.js](https://nodejs.org/) 20 or newer
-- [Rust](https://rustup.rs/) (stable) and the Visual Studio C++ Build Tools
-- [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/) (included with Windows 11)
+An official installer is coming and will be published under **Releases**. Minniondeck is only supported when installed from there, so it stays up to date and its plugins keep working.
 
-### Run it in development
-```bash
-npm install
-npm run tauri dev
-```
-
-### Build the app
-```bash
-npm run tauri build -- --no-bundle
-```
-
-The `build.cmd` and `build.ps1` scripts do the same on a multi-core machine, keep Cargo's output in `build\`, back up the previous exe and restart the app. Edit the thread count in `src-tauri/.cargo/config.toml` to match your CPU. Built files are not committed; an installer is on the way.
-
-### Command line
-```bash
-Minniondeck.exe profile build profile.json "My Profile.mdprofile"
-```
+**Requirements:** Windows 10 or 11 (64-bit) and an Android phone on the same Wi-Fi.
 
 ## Project layout
 
@@ -152,12 +132,12 @@ See [`docs/security-review-2026-10-30.md`](docs/security-review-2026-10-30.md) f
 - [ ] Plugin Store with community plugins
 - [ ] More languages
 
-## Contributing
+## Feedback
 
-Issues and ideas are welcome. Please open an issue before a large change. Community plugins will be accepted by pull request to the plugin index.
+Bug reports and ideas are welcome as GitHub issues. The code is published so you can read it and see how it works. It is not accepting outside code changes.
 
 ## License
 
-[MIT](LICENSE) © 2026 minnnion
+**Source-available, all rights reserved.** © 2026 minnnion. You may read the code and use the official release for your own use. You may not copy, rebuild, modify, redistribute or publish your own version of Minniondeck. See [LICENSE](LICENSE) for the exact terms.
 
 Minniondeck is not affiliated with Microsoft, Asobo, Fenix Simulations, BeyondATC, FSDreamTeam, Spotify or any other product named here. All names and logos belong to their owners.

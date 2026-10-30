@@ -1,21 +1,45 @@
-MIT License
+Minniondeck Source-Available License
 
-Copyright (c) 2026 minnnion
+Copyright (c) 2026 minnnion. All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+The source code in this repository is published so that it can be read and
+studied. It is NOT open source. No license is granted except as stated below.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. What you may do
+   a. View and read the source code in this repository.
+   b. Install and use the official Minniondeck release, as published by the
+      copyright holder, for your own personal use.
+   c. Report bugs and suggest ideas through GitHub issues.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+2. What you may not do
+   a. Copy, fork for distribution, rebuild, compile, or run your own build of
+      the software or any part of it.
+   b. Modify, adapt, or create derivative works of the software.
+   c. Distribute, sell, sublicense, host, or publish the software, any part of
+      it, or any modified or rebuilt version of it, in source or binary form.
+   d. Use the source code, names, logos, or artwork to make or promote a
+      competing or compatible product, or a product that could be mistaken
+      for Minniondeck.
+   e. Remove or alter this notice or any copyright notice.
+
+3. Plugins
+   Plugins written for Minniondeck by other people are theirs. Writing a plugin
+   that runs inside the official release does not give you any right to the
+   Minniondeck source code or to distribute Minniondeck itself.
+
+4. Third-party material
+   Parts of this repository use third-party components and trademarks that
+   belong to their owners and stay under their own licenses. Nothing here
+   grants any right to them.
+
+5. No warranty
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM,
+   DAMAGES, OR OTHER LIABILITY ARISING FROM THE SOFTWARE OR ITS USE.
+
+6. Ending
+   Any breach of these terms ends your rights under this license
+   automatically.
+
+To ask for permission to do something not allowed here, open an issue on the
+project's GitHub page.

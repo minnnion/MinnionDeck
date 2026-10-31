@@ -92,10 +92,10 @@ The MSFS 2024 plugin turns the phone into a cockpit panel:
 
 | File | For |
 |---|---|
-| `Minniondeck_0.1.0_x64-setup.exe` | Most people. Installs for you only (no admin) or for everyone on the PC. |
-| `Minniondeck_0.1.0_x64_en-US.msi` | Silent or managed installs. |
+| `Minniondeck_0.1.0_x64-setup.exe` | Most people. **Minniondeck Setup**: installs for you, with no admin prompt. |
+| `Minniondeck_0.1.0_x64_en-US.msi` | Silent or managed installs, for everyone on the PC. |
 
-The installer adds a Start-menu shortcut, opens `.mdprofile` files in Minniondeck, and has a normal uninstaller in Windows' Installed apps.
+**Minniondeck Setup** asks what you'll use Minniondeck for, shows the plugins from the marketplace that go with it, and installs the app and the plugins you keep ticked. Each plugin is checked against its SHA-256 before it's added. It adds Start-menu and desktop shortcuts, opens `.mdprofile` files in Minniondeck, and has a normal uninstaller in Windows' Installed apps.
 
 **Windows may say "Windows protected your PC"**, because the installer isn't code-signed yet. Press **More info**, then **Run anyway**.
 
@@ -106,7 +106,7 @@ Then add plugins from the **[Minnion Marketplace](https://minnnion.github.io/#ma
 Minniondeck is only supported when installed from Releases, so it stays up to date and its plugins keep working.
 
 ### Coming next
-A setup that asks what you'll use Minniondeck for (General, Streaming, Games or Work) and installs only the plugins that fit.
+Streaming, Games and Work in the setup, once their plugins are in the marketplace. Today it sets up General.
 
 ## Project layout
 
@@ -136,9 +136,9 @@ To report a security problem, open a private security advisory on GitHub.
 - [x] Local speech engine
 - [x] MSFS 2024 plugin: Fenix A320, live map, BeyondATC, GSX, SimBrief
 - [x] Cockpit camera: head motion and smart views
-- [x] Windows installer (0.1.0)
+- [x] Minniondeck Setup (0.1.0): asks what you'll use it for, and installs the plugins that fit
 - [x] Minnion Marketplace with official plugins: Spotify, Timer, System Monitor, Soundboard and Weather
-- [ ] Setup that asks what you'll use it for, and installs the plugins that fit
+- [ ] Streaming, Games and Work in the setup
 - [ ] Community plugins in the marketplace
 - [ ] More languages
 

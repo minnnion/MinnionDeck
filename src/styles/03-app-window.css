@@ -25,50 +25,38 @@
 /* One column, the panel's width: a long page name or a deep folder never widens it. With no
    column size it grew to its widest row, and the page list scrolled sideways. */
 .side { grid-template-columns: minmax(0, 1fr); overflow-x: hidden; }
+/* No scrollbar strip kept on the right (07-controls.css keeps one for every .side): the gap on the
+   right matches the left. A long page list still gets its scrollbar when it needs one. */
+.deck > .side { scrollbar-gutter: auto; }
 .tree, .tree ul, .tree li, .node { min-width: 0; }
 /* "Pages" on its line, + Page and + Folder side by side under it, as wide as each other
    (all three on one line didn't fit the panel, and they wrapped unevenly) */
 .side > .row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px; min-width: 0; }
-.side > .row .cap { grid-column: 1 / -1; margin-right: 0 !important; }
+.side > .row .cap { grid-column: 1 / -1; margin-right: 0 !important; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--slate); }
 .side > .row .btn.link { min-width: 0; min-height: 34px; padding: 2px 6px; font-size: 14px; justify-content: center; text-align: center; white-space: nowrap; }
-.mainp { flex: 1 1 auto; min-height: 0; padding: 14px; display: grid; gap: 12px; align-content: start; min-width: 0; overflow-y: auto; }
-.insp { --insp-h: 236px; flex: none; height: var(--insp-h); overflow: hidden; border-top: 4px solid var(--ink); background: var(--panel); padding: 12px 14px; display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 0.95fr); gap: 0 18px; align-content: stretch; min-width: 0; }
-.insp .isec { display: grid; gap: 8px; align-content: start; min-width: 0; min-height: 0; animation: viewIn 200ms steps(4, end); }
-.insp .isec + .isec { border-left: 2px dashed var(--rule); padding-left: 18px; }
-.insp .isec.wide { grid-column: span 2; }
-.insp .ihead { display: flex; align-items: center; gap: 12px; min-width: 0; padding-bottom: 8px; border-bottom: 2px dashed var(--rule); }
-/* The preview is the board button at its real size, scaled into this box; it keeps its hard shadow */
-.insp .ipv { flex: none; position: relative; margin: 0 6px 6px 0; }
-.insp .ipv > .tile.preview { position: absolute; left: 0; top: 0; max-width: none; transform-origin: 0 0; }
-.insp .iname { display: grid; gap: 4px; min-width: 0; }
+/* The page bar on top; the grid in the middle of the room left above the inspector bar (auto
+   margins, so a page taller than the room still starts at the top and scrolls) */
+.mainp { flex: 1 1 auto; min-height: 0; padding: 10px; display: flex; flex-direction: column; gap: 10px; min-width: 0; overflow-y: auto; }
+.mainp > .pagebar { flex: none; }
+.mainp > .agrid { flex: none; margin-block: auto; }
+/* The inspector is a slim bar under the grid: name and what the button does on the left, its
+   buttons on the right (05-deck-inspector.js) */
+.insp { flex: none; min-height: 64px; border-top: 4px solid var(--ink); background: var(--panel); padding: 8px 12px; display: flex; align-items: center; gap: 8px 16px; min-width: 0; }
+.insp .itxt { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; animation: viewIn 200ms steps(4, end); }
+.insp .itxt h3 { margin: 0; font-size: 16px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .insp .imeta { margin: 0; font-size: 13px; color: var(--slate); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.insp .ihead h3 { margin: 0; font-size: 17px; line-height: 1.2; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.insp .ihead .mface { flex: none; }
-.insp .kv { font-size: 13.5px; gap: 2px 10px; line-height: 1.35; }
-.insp .kv dd { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
-.insp .ilist { gap: 5px; }
-.insp .irow { font-size: 14px; line-height: 1.2; }
-.insp .irow > span:last-child, .insp .irow > span:last-child > span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.insp .irow small { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
-.insp .more { font-size: 13px; color: var(--slate); }
-.insp .help { font-size: 13.5px; margin: 0; }
-.insp .acts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.insp .acts .btn, .insp .delrow .btn { min-height: 38px; padding: 4px 8px; font-size: 14px; }
-.insp .delrow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.insp .delrow span { grid-column: 1 / -1; font-size: 14px; font-weight: 600; }
-.insp .acts > .go, .insp .acts > .pxsel { grid-column: 1 / -1; }
-.insp .acts > .del { grid-column: 1 / -1; justify-self: start; min-height: 30px; padding: 2px 10px; font-size: 13px; box-shadow: 2px 2px 0 var(--shadow); }
-.insp .lay { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; font-size: 14px; }
-.insp .lay > .cap { display: none; }
-.insp .lay .stack { gap: 6px; }
-.insp .nudge { grid-template-columns: repeat(3, 34px); grid-template-rows: repeat(2, 34px); }
-.insp .nudge .btn, .insp .lay .btn { min-width: 34px; min-height: 34px; }
+.insp .help { font-size: 13px; margin: 0; color: var(--slate); text-align: right; }
+.insp .acts { flex: none; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; }
+.insp .acts .btn { min-height: 32px; padding: 2px 10px; font-size: 14px; }
+.insp .acts .btn.more { min-width: 32px; padding: 2px 6px; }
+.insp .acts select, .insp .acts .pxsel { width: auto; min-width: 150px; }
+.insp .acts.lay { display: flex; gap: 6px 14px; font-size: 14px; }
+.insp .nudge { display: flex; gap: 4px; }
+.insp .nudge .btn, .insp .lay .btn { min-width: 32px; min-height: 32px; padding: 0; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 @container (max-width: 520px) {
-  .insp { grid-template-columns: minmax(0, 1fr); }
-  .insp .isec.wide { grid-column: auto; }
-  .insp { height: auto; overflow: visible; gap: 12px; }
-  .insp .isec + .isec { border-left: 0; padding-left: 0; border-top: 2px dashed var(--rule); padding-top: 12px; }
+  .insp { flex-wrap: wrap; }
+  .insp .acts { justify-content: flex-start; }
 }
 @media (max-width: 1060px) {
   .deck { grid-template-columns: 220px minmax(0, 1fr); }
@@ -109,10 +97,16 @@
 .tree .note { font-size: 13px; color: var(--slate); padding: 4px 8px 8px; }
 .tree li.fresh > .node { animation: popIn 240ms steps(3, end); }
 .pagebar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.crumbs { font-weight: 700; font-size: 18px; margin-right: auto; min-width: 0; overflow-wrap: anywhere; }
+/* The page bar is short, so the squares get the room */
+.pagebar .btn { min-height: 32px; padding: 2px 10px; font-size: 14px; }
+/* The profile card: "Switched by hand" stays on one line */
+.side .pick-btn > svg:last-child { display: none; }
+.side .pick-txt > span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.side .pick-txt small { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.crumbs { font-weight: 700; font-size: 16px; margin-right: auto; min-width: 0; overflow-wrap: anywhere; }
 .crumbs span { color: var(--slate); font-weight: 400; }
-.pagebar select { width: auto; min-height: 40px; font-size: 15px; padding: 4px 8px; }
-.agrid { display: grid; gap: 10px; grid-auto-rows: 84px; grid-auto-flow: row dense; }
+.pagebar select { width: auto; min-height: 32px; font-size: 15px; padding: 4px 8px; }
+.agrid { display: grid; gap: 6px; grid-auto-rows: 84px; grid-auto-flow: row dense; }
 .agrid .tile { font-size: 14px; padding: 6px 8px 8px; }
 .agrid .tile.sel { outline: 4px solid var(--coral-dark); outline-offset: 2px; }
 /* Edit layout: drag a button to move it, drag its coral corner to resize it */

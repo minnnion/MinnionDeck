@@ -4,6 +4,7 @@ mod applog;
 mod backups;
 mod cli;
 mod foreground;
+mod license;
 mod maptiles;
 mod market;
 mod opener;
@@ -67,6 +68,12 @@ pub fn run() {
             app.manage(storage::Store::new(app.handle())?);
             applog::init(&app.state::<storage::Store>().paths.root);
             applog::line(&format!("Minniondeck {} started", app.package_info().version));
+            // Licensing: the window shows an activation screen when this isn't licensed, and the
+            // backend refuses to run buttons (license.rs). A debug build is always licensed.
+            match license::init(&app.state::<storage::Store>().paths.root) {
+                license::Status::Licensed { name } => applog::line(&format!("Licensed to {name}")),
+                other => applog::line(&format!("Not activated ({other:?}); buttons are locked until a licence is entered")),
+            }
             // The minnion in the notification area, there as long as Minniondeck runs
             tray::create(app.handle())?;
             // Starts in the tray when the setting says so, or when the sign-in entry started it
@@ -155,6 +162,9 @@ pub fn run() {
             phones::notify_phone_update,
             actions::run_button,
             actions::confirm_imported,
+            license::license_status,
+            license::license_machine_code,
+            license::license_activate,
             plugins::list_plugins,
             plugins::reload_plugins,
             plugins::plugin_event,

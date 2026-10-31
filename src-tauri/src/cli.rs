@@ -94,7 +94,7 @@ const KIT_LIB: &str = include_str!("../../plugin-kit/src/lib.rs");
 /// Runs a plugin command if the arguments are one. Returns the exit code, or None to start the app.
 pub fn run(args: &[String]) -> Option<i32> {
     let command = args.get(1).map(String::as_str);
-    if command != Some("plugin") && command != Some("profile") {
+    if command != Some("plugin") && command != Some("profile") && command != Some("license") {
         return None;
     }
     attach_console();
@@ -104,6 +104,8 @@ pub fn run(args: &[String]) -> Option<i32> {
             Some("build") => build_profile(&rest[1..]),
             _ => Err(PROFILE_USAGE.into()),
         }
+    } else if command == Some("license") {
+        license_cmd(rest)
     } else {
         match rest.first().map(String::as_str) {
             Some("new") => new(&rest[1..]),
@@ -356,6 +358,37 @@ fn key(args: &[String]) -> Result<String, String> {
         signing::fingerprint(&me.key),
         file.display()
     ))
+}
+
+const LICENSE_USAGE: &str = "Minniondeck licensing (owner only):\n  license show                   this PC's machine code\n  license init                   make the licensing key once (prints the public key to paste into license.rs)\n  license new <machine-code> [--name \"Who it's for\"]   sign a licence for that PC → <code>.mdlicense";
+
+/// license show / init / new — the owner's key tools (see license.rs)
+fn license_cmd(rest: &[String]) -> Result<String, String> {
+    match rest.first().map(String::as_str) {
+        Some("show") => Ok(format!("This PC's machine code:\n\n  {}\n\nSend this to get a licence key.", crate::license::machine_code_display())),
+        Some("init") => crate::license::owner_init(&app_data()?),
+        Some("new") => {
+            let mut code = None;
+            let mut name = String::new();
+            let mut i = 1;
+            while i < rest.len() {
+                match rest[i].as_str() {
+                    "--name" => {
+                        name = rest.get(i + 1).ok_or("--name needs a value.")?.clone();
+                        i += 1;
+                    }
+                    a if code.is_none() => code = Some(a.to_string()),
+                    a => return Err(format!("Unexpected \"{a}\".\n\n{LICENSE_USAGE}")),
+                }
+                i += 1;
+            }
+            let code = code.ok_or_else(|| format!("Which machine code?\n\n{LICENSE_USAGE}"))?;
+            let out = std::env::current_dir().map_err(|e| e.to_string())?;
+            crate::license::owner_issue(&app_data()?, &code, &name, &out)
+        }
+        None | Some("help" | "--help" | "-h" | "/?") => Ok(LICENSE_USAGE.into()),
+        Some(other) => Err(format!("\"{other}\" isn't a license command.\n\n{LICENSE_USAGE}")),
+    }
 }
 
 #[cfg(test)]

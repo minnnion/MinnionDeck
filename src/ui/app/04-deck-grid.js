@@ -6,7 +6,7 @@
   }
   // ----- Every button has a cell on its page. Buttons without one are packed into the first gap. -----
   let CELL_H = 84;
-  const GAP = 10, MAX_H = 3;
+  const GAP = 6, MAX_H = 3;
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   function layoutPage(pg) {
     const cols = pg.cols, tiles = tilesOf(pg), own = new Map();
@@ -243,20 +243,26 @@
     box.append(bar, g, hint);
     fitGridRows(g, bar, pg, L.rows);
   }
-  // Rows fill the height left above the fixed inspector
+  // Rows fill the height left above the inspector bar
   let lastFit = null;
   new ResizeObserver(() => { if (lastFit && lastFit[0].isConnected) fitGridRows(...lastFit); }).observe(document.querySelector(".deckmain"));
   function fitGridRows(g, bar, pg, rows) {
     lastFit = [g, bar, pg, rows];
     const box = $("a-main"), main = box.parentElement;
-    const cw = (box.clientWidth - 28 - GAP * (pg.cols - 1)) / pg.cols;
+    // The grid is drawn at the last page's size first, which can add a scrollbar for a moment and
+    // make the squares too small. Measure without it, unless the page has more rows than fit (it
+    // really scrolls then).
+    if (rows <= 3) box.style.overflowY = "hidden";
+    const cw = (box.clientWidth - 20 - GAP * (pg.cols - 1)) / pg.cols;
+    box.style.overflowY = "";
     // Every cell is square, like the button designer's canvas, so a design looks the same on the
     // board as where you made it: a 1 × 1 button is a square, a 2 × 1 is two squares and the gap.
-    // The squares are as big as the room allows, and the grid sits in the middle. They're sized
-    // for three rows at most: a taller page keeps big buttons and scrolls.
-    let h = cw > 0 ? Math.floor(Math.min(cw, 116)) : 84;
+    // The squares are as big as the room allows (the grid fills the width when the height lets
+    // it), and the grid sits in the middle. They're sized for three rows at most: a taller page
+    // keeps big buttons and scrolls.
+    let h = cw > 0 ? Math.floor(cw) : 84;
     if (!window.matchMedia("(max-width: 720px)").matches && main.clientHeight) {
-      const room = main.clientHeight - $("a-insp").offsetHeight - 28 - bar.offsetHeight - 12;
+      const room = main.clientHeight - $("a-insp").offsetHeight - 20 - bar.offsetHeight - 10;
       const fit = Math.min(rows, 3);
       h = Math.floor(Math.min(cw, (room - GAP * (fit - 1)) / fit));
     }

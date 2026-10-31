@@ -67,15 +67,18 @@ windows = { version = "0.62", features = [
   "Win32_System_Console",
   "Win32_Security",
   "Win32_Security_Cryptography",
+  "Win32_System_Registry",
 ] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
-# Fast to build: every core works (16 code units), only what changed is rebuilt (incremental),
+# Fast to build: the crate is cut into 256 code units, so all 16 threads always have work and a
+# change re-optimises only the small units it touches (26 s -> 5 s for one file, 2026-10-31); only
+# what changed is rebuilt (incremental),
 # no whole-program LTO. With lto = true and codegen-units = 1 a one-line change took 3.5-5 min,
 # because the whole app (Tauri, the speech model's maths, TLS...) was re-optimised on one core.
 [profile.release]
-codegen-units = 16
+codegen-units = 256
 lto = false
 incremental = true
 opt-level = 3

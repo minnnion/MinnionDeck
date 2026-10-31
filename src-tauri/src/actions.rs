@@ -246,6 +246,9 @@ pub fn run_steps(steps: &[Step], button: &crate::plugins::ButtonCtx) -> Result<S
 /// A button was pressed (in the inspector or on a phone): run it off the main thread
 #[tauri::command]
 pub async fn run_button(steps: Vec<Step>, button: Option<crate::plugins::ButtonCtx>) -> Result<String, String> {
+    if !crate::license::is_licensed() {
+        return Err("Minniondeck isn't activated. Enter your licence key to use the buttons.".into());
+    }
     let button = button.unwrap_or_default();
     let result = tauri::async_runtime::spawn_blocking(move || run_steps(&steps, &button)).await.map_err(|e| e.to_string())?;
     if let Err(e) = &result {

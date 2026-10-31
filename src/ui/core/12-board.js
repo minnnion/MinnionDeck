@@ -1,6 +1,8 @@
 // ===== Board =====
 function render() {
-  const tiles = boards[current];
+  // The app replaces the example boards with the profile's pages, so "Main" may be gone: an
+  // empty list then, or openEditor, Save and Delete stop at this line
+  const tiles = boards[current] || [];
   grid.innerHTML = "";
   grid.hidden = tiles.length === 0;
   emptyEl.hidden = tiles.length !== 0;

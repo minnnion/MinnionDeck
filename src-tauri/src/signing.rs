@@ -23,7 +23,11 @@ pub const SIG_FILE: &str = "signature.json";
 
 /// Authors whose plugins run on every copy of Minniondeck without Developer mode. To add one,
 /// they run `Minniondeck.exe plugin key` and send their .mdkey file; copy its name and key here.
-pub const BUILT_IN: &[(&str, &str)] = &[("Minniondeck", "2cfPLPsoukI1rpnbvbrmiU7y+vnC8Bc5bSNzFFswy1Y=")];
+pub const BUILT_IN: &[(&str, &str)] = &[
+    ("Minniondeck", "2cfPLPsoukI1rpnbvbrmiU7y+vnC8Bc5bSNzFFswy1Y="),
+    // Signs the General plugins (Timer, System Monitor, Soundboard, Weather); key 0cc7 5fff 43c1 1a23
+    ("minnion", "MS4LTxUA6qVdJYTflEGMUIU3etDXurAlytmO/RUMy98="),
+];
 
 const B64: base64::engine::GeneralPurpose = base64::engine::general_purpose::STANDARD;
 
@@ -244,6 +248,15 @@ pub fn unprotect(data: &[u8]) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn built_in_authors_have_good_keys() {
+        for (name, key) in BUILT_IN {
+            assert!(valid_key(key), "{name}'s key isn't a 32-byte Ed25519 key");
+        }
+        let minnion = BUILT_IN.iter().find(|(n, _)| *n == "minnion").expect("minnion is built in");
+        assert_eq!(fingerprint(minnion.1), "0cc7 5fff 43c1 1a23");
+    }
 
     #[test]
     fn sign_then_verify_and_catch_changes() {

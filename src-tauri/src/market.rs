@@ -384,10 +384,12 @@ pub async fn market_profile_download(link: String) -> Result<String, String> {
 /// The website's address for one of its pages. GIFs and button pictures are made there now and
 /// come into the app with Import in the Edit button window.
 fn site_url(page: &str) -> Option<String> {
-    matches!(page, "gifs" | "images" | "marketplace" | "docs").then(|| format!("https://{GITHUB_OWNER}.github.io/#{page}"))
+    // ?app: the site looks for a tab of itself that is already open, turns that one to the page and
+    // closes the new tab (minnnion.github.io, index.html's start)
+    matches!(page, "gifs" | "images" | "marketplace" | "docs").then(|| format!("https://{GITHUB_OWNER}.github.io/?app#{page}"))
 }
 
-/// Open a page of the website in the browser. Only the pages named above, never an address from the UI.
+/// Open a page of the website in the default browser. Only the pages named above, never an address from the UI.
 #[tauri::command]
 pub fn open_site(page: String) -> Result<(), String> {
     crate::actions::open_url(&site_url(&page).ok_or("That isn't a page of the Minniondeck website.")?)
@@ -471,7 +473,7 @@ mod tests {
 
     #[test]
     fn only_the_websites_own_pages_open() {
-        assert_eq!(site_url("gifs"), Some(format!("https://{GITHUB_OWNER}.github.io/#gifs")));
+        assert_eq!(site_url("gifs"), Some(format!("https://{GITHUB_OWNER}.github.io/?app#gifs")));
         assert!(site_url("images").is_some());
         assert_eq!(site_url("https://evil.example"), None);
         assert_eq!(site_url(""), None);

@@ -14,7 +14,7 @@ function renderBg(st) {
 }
 
 // GIFs and pictures are made on the Minniondeck website ("gifs" or "images" page, opened in the
-// browser); the files they give come back with Import
+// default browser, in the site's tab if one is open); the files they give come back with Import
 function openSite(page) {
   backend.run("open_site", { page }).then(() => say("Opened the Minniondeck website. Download what you make, then use Import here.")).catch((e) => say(String(e)));
 }

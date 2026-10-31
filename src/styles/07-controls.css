@@ -34,7 +34,7 @@
 .pxsel-opt[aria-selected="true"].active { background: var(--mint-dark); }
 .pxsel-opt[aria-selected="true"]::after { content: "✓"; margin-left: auto; padding-left: 12px; }
 .pxsel-opt[aria-disabled="true"] { color: var(--slate); cursor: default; }
-.ed-dialog .pxsel-btn, .creator .pxsel-btn, .pagebar .pxsel-btn, .dev .pxsel-btn, .insp .pxsel-btn { font-size: 14px; min-height: 36px; padding: 4px 8px; border-width: 3px; }
+.ed-dialog .pxsel-btn, .creator .pxsel-btn, .dev .pxsel-btn, .insp .pxsel-btn { font-size: 14px; min-height: 36px; padding: 4px 8px; border-width: 3px; }
 .pcard .pxsel-btn, .srow .pxsel-btn { font-size: 15px; min-height: 40px; }
 .srow .pxsel { min-width: 180px; }
 
@@ -57,3 +57,5 @@
 .seg.seg4 button:nth-child(even) { border-left: 3px solid var(--ink); }
 .seg.seg4 button:nth-child(n + 3) { border-top: 3px solid var(--ink); }
 
+/* The page bar's grid size: as short as its buttons */
+.pagebar .pxsel-btn { font-size: 14px; min-height: 32px; padding: 2px 8px; border-width: 3px; }

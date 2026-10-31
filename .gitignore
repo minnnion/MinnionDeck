@@ -24,8 +24,6 @@ dist-ssr
 *.sw?
 build
 
-# Local Claude Code settings (per machine)
-.claude/
 
 # Build output and installers (an installer is published as a release, not committed)
 *.exe

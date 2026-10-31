@@ -1,6 +1,6 @@
 [package]
 name = "minniondeck"
-version = "3.5.1"
+version = "0.1.0"
 description = "Minniondeck"
 authors = ["you"]
 edition = "2024"

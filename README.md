@@ -37,7 +37,7 @@ The phone is the main device. Lay your deck out once on the PC, and the phone fo
 
 ### Deck and button designer
 - **Pages, folders and profiles.** Grid layouts, buttons in three sizes, Go to page and Back, and an inspector for the selected button.
-- **Pixel-art button designer.** Layers, button states (on and off and more), press animations, a GIF maker, a pixel editor, **1,036 pixel icons** and **3,466 app and game logos**, and live text.
+- **Pixel-art button designer.** Layers, button states (on and off and more), press animations, **1,036 pixel icons** and **3,466 app and game logos**, and live text. The GIF maker and image maker are on the [website](https://minnnion.github.io).
 - **Actions.** Keys, typing, mouse, programs (drop one on the Edit window), websites, volume and media, waits, sequences, knobs, live maps and plugin screens.
 - **Automatic profile switching.** A profile can switch on by itself when an app such as OBS Studio or Spotify comes to the front.
 - **Share profiles.** Export and import `.mdprofile` files, with an "Allow imported buttons?" check before anything runs.
@@ -71,8 +71,12 @@ Plugins are signed `.mdplugin` files written with the Rust **plugin kit** in [`p
 | **Speech + Voices** | Offline text to speech with 37 English voices |
 | **Case Lights** | MSI board RGB: colours, scenes, screen sync |
 | **Spotify Control** | Play, skip, volume and a now-playing tile with the real cover |
+| **Timer** | Countdowns, a stopwatch, a focus timer (Pomodoro) and a clock, live on the key |
+| **System Monitor** | CPU, memory, disk space and network speed, read straight from Windows |
+| **Soundboard** | Play MP3, WAV, WMA or M4A files from your keys, each at its own volume |
+| **Weather** | The weather now for any town, with a matching picture (data by Open-Meteo.com) |
 
-> Plugins live in their own repositories and are not part of this one.
+> Plugins are not part of this repository. Install them from the **[Minnion Marketplace](https://minnnion.github.io/#marketplace)**: press **Install** and Minniondeck downloads, checks and loads the plugin.
 
 ### Built for flight simulation
 The MSFS 2024 plugin turns the phone into a cockpit panel:
@@ -82,24 +86,27 @@ The MSFS 2024 plugin turns the phone into a cockpit panel:
 - **BeyondATC, GSX Pro and SimBrief:** radio messages, services, pushback direction, and the OFP screen. All read through the links those tools offer. Nothing in them is changed.
 - **Cockpit camera:** head motion for engines, ground, air and touchdown, and smart views you reach by holding the middle mouse button.
 
-## Installer and Plugin Store (in design)
-
-An installer is being designed so a first run asks what you do, then downloads only the plugins, profiles and helpers that fit:
-
-**Flight simmer, Truck simmer, Car racing simmer, or General / Stream Deck.**
-
-The in-app **Plugin Store** will list official and community plugins live from GitHub. The images below are design previews, not final screens.
-
-<div align="center">
-<img src="docs/screenshots/installer-setup.png" alt="Installer design preview: pick your sim" width="420">
-<img src="docs/screenshots/plugin-store.png" alt="Plugin Store design preview" width="420">
-</div>
-
 ## Download
 
-An official installer is coming and will be published under **Releases**. Minniondeck is only supported when installed from there, so it stays up to date and its plugins keep working.
+**[Download Minniondeck 0.1.0 for Windows](https://github.com/minnnion/MinnionDeck/releases/latest)** from Releases. It's free, with no account and no licence key.
+
+| File | For |
+|---|---|
+| `Minniondeck_0.1.0_x64-setup.exe` | Most people. Installs for you only (no admin) or for everyone on the PC. |
+| `Minniondeck_0.1.0_x64_en-US.msi` | Silent or managed installs. |
+
+The installer adds a Start-menu shortcut, opens `.mdprofile` files in Minniondeck, and has a normal uninstaller in Windows' Installed apps.
+
+**Windows may say "Windows protected your PC"**, because the installer isn't code-signed yet. Press **More info**, then **Run anyway**.
+
+Then add plugins from the **[Minnion Marketplace](https://minnnion.github.io/#marketplace)**, and get the phone app from the [website](https://minnnion.github.io/#download).
 
 **Requirements:** Windows 10 or 11 (64-bit) and an Android phone on the same Wi-Fi.
+
+Minniondeck is only supported when installed from Releases, so it stays up to date and its plugins keep working.
+
+### Coming next
+A setup that asks what you'll use Minniondeck for (General, Streaming, Games or Work) and installs only the plugins that fit.
 
 ## Project layout
 
@@ -129,8 +136,10 @@ To report a security problem, open a private security advisory on GitHub.
 - [x] Local speech engine
 - [x] MSFS 2024 plugin: Fenix A320, live map, BeyondATC, GSX, SimBrief
 - [x] Cockpit camera: head motion and smart views
-- [ ] Installer with the "what do you sim?" setup
-- [ ] Plugin Store with community plugins
+- [x] Windows installer (0.1.0)
+- [x] Minnion Marketplace with official plugins: Spotify, Timer, System Monitor, Soundboard and Weather
+- [ ] Setup that asks what you'll use it for, and installs the plugins that fit
+- [ ] Community plugins in the marketplace
 - [ ] More languages
 
 ## Feedback

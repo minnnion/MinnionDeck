@@ -121,14 +121,29 @@ To report a security problem, open a private security advisory on GitHub.
 
 ## Roadmap
 
-- [x] Deck, profiles, phones and the button designer
-- [x] Plugin system, with encrypted settings
-- [x] Local speech engine
-- [x] Minniondeck Setup (0.1.0): asks what you'll use it for, and installs the plugins that fit
-- [x] Minnion Marketplace with official plugins: Spotify, Timer, System Monitor, Soundboard and Weather
-- [ ] Streaming, Games and Work in the setup
-- [ ] Community plugins in the marketplace
-- [ ] More languages
+What's done, what's being worked on now, and what comes after. There are no dates: things move along when they're ready.
+
+<p align="center">
+<img src="docs/roadmap.svg" alt="Minniondeck roadmap: Done, Now, Next and Later" width="860">
+</p>
+
+**✅ Done**
+- **Deck, profiles, phones and the button designer.** Your phone shows big buttons, you set them up on the PC.
+- **Plugin system, with encrypted settings.** Plugins add new buttons, and anything private they store (like a login) is kept encrypted.
+- **Local speech engine.** Speech runs on your own PC.
+- **Minniondeck Setup 0.1.0.** Asks what you'll use Minniondeck for, then installs the plugins that fit.
+- **Minnion Marketplace with official plugins.** Spotify, Timer, System Monitor, Soundboard, Weather, Case Lights and Speech.
+
+**🔨 Now**
+- **Community plugins in the marketplace.** Well under way. Anyone can send a plugin through the "Submit a plugin" form on the [website](https://minnnion.github.io). Each one is checked by hand within 7 days. Approved plugins are signed and listed as Community plugins.
+- **Streaming, Games and Work in the setup.** New choices in Minniondeck Setup, each with its own set of plugins.
+
+**⏭️ Next**
+- **More plugins for each category.** More official plugins for each kind of use, so every choice in the setup comes with a good set of buttons.
+- **A faster, lighter app.** Quicker to start, quicker to respond, and lighter on your PC.
+
+**🔭 Later**
+- **More languages.** Minniondeck in languages other than English.
 
 ## Feedback
 

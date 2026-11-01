@@ -15,7 +15,7 @@ Plugins add music, lights, timers, sounds and more.
 
 **[Website](https://minnnion.github.io)** · **[MinnionDeck Marketplace](https://github.com/minnnion/Minnion-Marketplace)**
 
-<img src="docs/screenshots/deck.png" alt="The Minniondeck desktop app showing the Weather profile" width="860">
+<img src="docs/screenshots/deck-0.2.png" alt="The Minniondeck desktop app showing the Weather profile" width="860">
 
 </div>
 
@@ -43,7 +43,7 @@ The phone is the main device. Lay your deck out once on the PC, and the phone fo
 - **Share profiles.** Export and import `.mdprofile` files, with an "Allow imported buttons?" check before anything runs.
 
 <div align="center">
-<img src="docs/screenshots/inspector.png" alt="A Soundboard page with a button selected" width="780">
+<img src="docs/screenshots/inspector-0.2.png" alt="A Soundboard page with a button selected" width="780">
 </div>
 
 ### Phones
@@ -58,7 +58,7 @@ The phone is the main device. Lay your deck out once on the PC, and the phone fo
 
 ### Profiles
 <div align="center">
-<img src="docs/screenshots/profiles.png" alt="The Profiles page" width="780">
+<img src="docs/screenshots/profiles-0.2.png" alt="The Profiles page" width="780">
 </div>
 
 ### Plugins

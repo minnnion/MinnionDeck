@@ -15,7 +15,7 @@ Plugins add music, lights, timers, sounds and more.
 
 **[Website](https://minnnion.github.io)** · **[MinnionDeck Marketplace](https://github.com/minnnion/Minnion-Marketplace)**
 
-<img src="docs/screenshots/deck.png" alt="The Minniondeck desktop app showing the Case Lights profile" width="860">
+<img src="docs/screenshots/deck.png" alt="The Minniondeck desktop app showing the Weather profile" width="860">
 
 </div>
 

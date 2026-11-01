@@ -168,6 +168,11 @@ pub fn check_url(url: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Start a program file Minniondeck saved itself (the downloaded app update, see app_update.rs)
+pub(crate) fn start_file(path: &std::path::Path) -> Result<(), String> {
+    win::open(&path.to_string_lossy(), "")
+}
+
 /// Open a web page in the default browser (the website's pages, see market.rs)
 pub(crate) fn open_url(url: &str) -> Result<(), String> {
     check_url(url)?;

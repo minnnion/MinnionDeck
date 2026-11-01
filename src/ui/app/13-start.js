@@ -26,3 +26,4 @@
   $("a-logo").innerHTML = appIconSVG(16);
   // Loads saved profiles and settings first, then opens the Deck (see 11-persistence.js)
   startApp();
+  startUpdateChecks();

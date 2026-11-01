@@ -154,6 +154,10 @@
     cols.append(left, phonePreview());
     pad.appendChild(cols);
     box.appendChild(pad);
+    // The phone app isn't out yet: the page stays, under a white cover that says so
+    pad.inert = true;
+    box.classList.add("soon");
+    box.append(el("div", { className: "soon-cover" }, [el("b", { textContent: "Coming soon" }), el("p", { textContent: "The Minniondeck phone app is on its way." })]));
     if (active && $(active)) $(active).focus();
   }
   // Phone app updates arrive with the update source (a GitHub repo, later). Until then this says so.

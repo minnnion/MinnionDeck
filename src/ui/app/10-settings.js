@@ -97,8 +97,8 @@
       cu(pluginTable),
       { ...sw("devMode", "Developer mode", "Runs plugins that aren't signed by a trusted author, like ones you are building. Turn it on only for plugins you trust."), get: () => PLUG.cfg.devMode, apply: setDevMode },
       cu(authorsPanel),
-      fd("plugins", "Plugins folder", "Each plugin has its own folder here. Install plugins with Install a plugin… or by opening a .mdplugin file."),
-      soon(sw("plugUpd", "Check plugins for updates every day"))
+      fd("plugins", "Plugins folder", "Each plugin has its own folder here. Install plugins from the Marketplace page, with Install a plugin… or by opening a .mdplugin file."),
+      sw("plugUpd", "Check plugins for updates every day", "Looks at the marketplace on GitHub once a day. Plugins with a newer version show a badge on the Marketplace page.")
     ]],
     ["simbrief", "SimBrief", "note", () => [cu(simbriefPanel)]],
     ["backup", "Backup", "folder", () => [
@@ -109,7 +109,8 @@
       cu(backupPanel)
     ]],
     ["updates", "Updates", "down", () => [
-      cu(desktopUpdate),
+      cu(appUpdateBox),
+      sw("appUpd", "Check for Minniondeck updates every day", "Looks at GitHub Releases once a day and tells you when a new version is out. Nothing downloads until you press Download."),
       soon(sg("appChannel", "Update channel", [["stable", "Stable"], ["beta", "Beta"]])),
       soon(sw("bundlePhone", "Offer phone app updates when the desktop app updates")),
       cu(() => { const b = btn("Push the phone app now", "btn", null); b.disabled = true; return el("div", { className: "row" }, [b, soonTag()]); })
@@ -492,10 +493,11 @@
     t.appendChild(tb);
     w.appendChild(t);
     const install = btn("Install a plugin…", "btn", pickPluginFile);
+    const market = btn("Open the Marketplace", "btn", () => go("marketplace"));
     // Loads new and rebuilt plugins without restarting Minniondeck
     const reload = btn("Reload plugins", "btn", () => pluginCommand("reload_plugins", {}, "Plugins reloaded"));
     install.disabled = reload.disabled = PLUG.busy || !backend.available();
-    return el("div", { className: "stack" }, [w, ...(PLUG.form ? [pluginForm()] : []), el("div", { className: "row" }, [install, reload])]);
+    return el("div", { className: "stack" }, [w, ...(PLUG.form ? [pluginForm()] : []), el("div", { className: "row" }, [market, install, reload])]);
   }
   async function setDevMode(on) {
     if (on === PLUG.cfg.devMode) return;
@@ -538,18 +540,6 @@
     add.disabled = !backend.available();
     box.append(w, el("div", { className: "row" }, [add]));
     if (PLUG.cfg.myKey) box.append(el("span", { className: "help", textContent: `This PC's author key: ${PLUG.cfg.myKey.name} (${PLUG.cfg.myKey.fingerprint}). Minniondeck.exe plugin pack signs your plugins with it.` }));
-    return box;
-  }
-  // There is no update source yet, so nothing is checked and nothing pretends to be
-  function desktopUpdate() {
-    const box = el("div", { className: "stack" });
-    box.style.gap = "8px";
-    const m = el("span");
-    m.innerHTML = minnion({ c: pal("mint"), expr: "open", scale: 3 });
-    const status = el("p", { textContent: `Minniondeck ${APP.version || ""} for Windows. Updates aren't set up yet, so a newer version has to be installed by hand.` });
-    const b = btn("Check for updates", "btn", null);
-    b.disabled = true;
-    box.append(el("div", { className: "row" }, [m, status]), el("div", { className: "row" }, [b, soonTag()]));
     return box;
   }
   function about() {

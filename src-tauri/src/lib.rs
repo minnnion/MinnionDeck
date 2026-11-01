@@ -1,4 +1,5 @@
 mod actions;
+mod app_update;
 mod autostart;
 mod applog;
 mod backups;
@@ -178,6 +179,11 @@ pub fn run() {
             plugins::add_author,
             plugins::remove_author,
             plugins::pick_plugin_file,
+            app_update::app_update_check,
+            app_update::app_update_download,
+            app_update::app_update_cancel,
+            app_update::app_update_install,
+            market::market_list,
             market::market_lookup,
             market::market_download,
             market::market_profile_download,

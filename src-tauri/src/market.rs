@@ -221,14 +221,19 @@ fn agent() -> ureq::Agent {
         .build()
 }
 
-fn fetch_index() -> Result<Index, String> {
+/// index.json from the marketplace repository, as text
+fn fetch_index_text() -> Result<String, String> {
     let resp = agent().get(&index_url()).call().map_err(|e| match e {
         ureq::Error::Status(code, _) => format!("The marketplace list isn't available right now (GitHub answered {code})."),
         _ => "Couldn't reach GitHub. Check your internet connection and try again.".to_string(),
     })?;
     let mut text = String::new();
     resp.into_reader().take(MAX_INDEX_BYTES).read_to_string(&mut text).map_err(|e| e.to_string())?;
-    serde_json::from_str(&text).map_err(|_| "The marketplace list couldn't be read.".to_string())
+    Ok(text)
+}
+
+fn fetch_index() -> Result<Index, String> {
+    serde_json::from_str(&fetch_index_text()?).map_err(|_| "The marketplace list couldn't be read.".to_string())
 }
 
 /// The plugin and the version a link asks for, from the marketplace list
@@ -251,6 +256,15 @@ fn installed_version(root: &Path, id: &str) -> Option<String> {
 /// Downloads wait in a dot-folder, which the plugin list skips and start-up clears
 fn downloads_dir(root: &Path) -> PathBuf {
     root.join("plugins").join(".downloads")
+}
+
+/// The whole marketplace list, for the app's Marketplace page. It comes from the same fixed
+/// address as installs, and installing still goes through market_lookup and market_download.
+#[tauri::command]
+pub async fn market_list() -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(|| serde_json::from_str(&fetch_index_text()?).map_err(|_| "The marketplace list couldn't be read.".to_string()))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// What an install link names, looked up in the marketplace list

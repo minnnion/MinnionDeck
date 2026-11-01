@@ -98,6 +98,8 @@
     }
     await loadPluginConfig();
     if (A.view === "settings") renderSettings();
+    if (A.view === "marketplace") renderMarketplace();
+    renderRail();
     miRender();
   }
 

@@ -11,7 +11,7 @@ Plugins add music, lights, timers, sounds and more.
 ![License](https://img.shields.io/badge/license-source--available-5fd0a8)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-7cc4ff)
 ![Built with](https://img.shields.io/badge/built%20with-Tauri%202%20%C2%B7%20Rust%20%C2%B7%20JS-b79cff)
-![Version](https://img.shields.io/badge/version-0.1.0-ffc93c)
+![Version](https://img.shields.io/badge/version-0.2.0-ffc93c)
 
 **[Website](https://minnnion.github.io)** · **[MinnionDeck Marketplace](https://github.com/minnnion/Minnion-Marketplace)**
 
@@ -51,6 +51,11 @@ The phone is the main device. Lay your deck out once on the PC, and the phone fo
 - The phone follows the PC's page, stays awake, vibrates on press, and gets everything back when it reconnects.
 - Go to page and Back turn the phone's page at once.
 
+### Marketplace and updates
+- **Marketplace page.** The plugins in the Minnion Marketplace, read live from GitHub: search, categories, details and every version. Install and Update right there; each download is checked against its SHA-256 before it installs.
+- **App updates.** Settings › Updates checks GitHub Releases, downloads the new installer, checks it against GitHub's SHA-256 and installs it. A daily check is on unless you turn it off.
+- **Plugin updates.** Checked once a day. Plugins with a newer version get a badge and an Update button.
+
 ### Profiles
 <div align="center">
 <img src="docs/screenshots/profiles.png" alt="The Profiles page" width="780">
@@ -78,12 +83,12 @@ Plugins are signed `.mdplugin` files written with the Rust **plugin kit** in [`p
 
 ## Download
 
-**[Download Minniondeck 0.1.0 for Windows](https://github.com/minnnion/MinnionDeck/releases/latest)** from Releases. It's free, with no account and no licence key.
+**[Download Minniondeck 0.2.0 for Windows](https://github.com/minnnion/MinnionDeck/releases/latest)** from Releases. It's free, with no account and no licence key.
 
 | File | For |
 |---|---|
-| `Minniondeck_0.1.0_x64-setup.exe` | Most people. **Minniondeck Setup**: installs just for you, with no extra Windows prompts. |
-| `Minniondeck_0.1.0_x64_en-US.msi` | Silent or managed installs, for everyone on the PC. |
+| `Minniondeck_0.2.0_x64-setup.exe` | Most people. **Minniondeck Setup**: installs just for you, with no extra Windows prompts. |
+| `Minniondeck_0.2.0_x64_en-US.msi` | Silent or managed installs, for everyone on the PC. |
 
 **Minniondeck Setup** asks what you'll use Minniondeck for, shows the plugins from the marketplace that go with it, and installs the app and the plugins you keep ticked. Each plugin is checked against its SHA-256 before it's added. It adds Start-menu and desktop shortcuts, opens `.mdprofile` files in Minniondeck, and has a normal uninstaller in Windows' Installed apps.
 
@@ -131,7 +136,8 @@ What's done, what's being worked on now, and what comes after. There are no date
 - **Deck, profiles, phones and the button designer.** Your phone shows big buttons, you set them up on the PC.
 - **Plugin system, with encrypted settings.** Plugins add new buttons, and anything private they store (like a login) is kept encrypted.
 - **Local speech engine.** Speech runs on your own PC.
-- **Minniondeck Setup 0.1.0.** Asks what you'll use Minniondeck for, then installs the plugins that fit.
+- **Minniondeck 0.2.0: Marketplace page and updates.** Browse and install plugins in the app, and update Minniondeck and its plugins from GitHub.
+- **Minniondeck Setup.** Asks what you'll use Minniondeck for, then installs the plugins that fit.
 - **Minnion Marketplace with official plugins.** Spotify, Timer, System Monitor, Soundboard, Weather, Case Lights and Speech.
 
 **🔨 Now**

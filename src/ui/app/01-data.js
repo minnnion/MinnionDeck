@@ -50,7 +50,7 @@
   let previewPhone = null, removing = null;
 
   // ----- Settings values -----
-  const SET = { theme: "system", startWin: true, tray: false, close: "tray", lang: "English", anim: "full", crew: true, tileSize: "m", names: true, autoSwitch: true, backBtn: true, startPage: "last", conn: "wifi", port: "47800", pin: true, followPc: true, awake: true, haptics: true, pluginsPath: "C:\\Users\\you\\Documents\\Minniondeck\\plugins", plugUpd: true, autoBackup: true, keep: "5", backupPath: "C:\\Users\\you\\Documents\\Minniondeck\\backups", appChannel: "stable", bundlePhone: true };
+  const SET = { theme: "system", startWin: true, tray: false, close: "tray", lang: "English", anim: "full", crew: true, tileSize: "m", names: true, autoSwitch: true, backBtn: true, startPage: "last", conn: "wifi", port: "47800", pin: true, followPc: true, awake: true, haptics: true, pluginsPath: "C:\\Users\\you\\Documents\\Minniondeck\\plugins", plugUpd: true, appUpd: true, updChecked: 0, autoBackup: true, keep: "5", backupPath: "C:\\Users\\you\\Documents\\Minniondeck\\backups", appChannel: "stable", bundlePhone: true };
   let settingsTab = "general", checkState = "idle";
   window.openPluginSettings = () => { hideEditor(); settingsTab = "plugins"; go("settings"); };
 

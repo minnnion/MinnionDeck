@@ -28,7 +28,7 @@ Minniondeck is a Stream-Deck-style system made of three parts:
 | Part | What it does |
 |---|---|
 | **Desktop app** (this repo) | The hub. Holds your profiles, buttons, pictures and plugins, runs actions on the PC, and talks to your phones. |
-| **Phone app** (Android, separate repo) | Shows the active profile as a deck of big square buttons and live screens. Presses go straight to the PC over Wi-Fi. |
+| **Phone app** (Android, separate repo, **coming soon**) | Shows the active profile as a deck of big square buttons and live screens. Presses go straight to the PC over Wi-Fi. |
 | **Plugins** (separate repos) | Add whole sets of buttons: Spotify, case lights, timers, a soundboard, speech and more. |
 
 The phone is the main device. Lay your deck out once on the PC, and the phone follows it, page for page.
@@ -89,7 +89,7 @@ Plugins are signed `.mdplugin` files written with the Rust **plugin kit** in [`p
 
 **Windows may say "Windows protected your PC"**, because the installer isn't code-signed yet. Press **More info**, then **Run anyway**.
 
-Then add plugins from the **[Minnion Marketplace](https://minnnion.github.io/#marketplace)**, and get the phone app from the [website](https://minnnion.github.io/#download).
+Then add plugins from the **[Minnion Marketplace](https://minnnion.github.io/#marketplace)**. The phone app is **coming soon**: it will be free on the [website](https://minnnion.github.io/#download) and on GitHub Releases.
 
 **Requirements:** Windows 10 or 11 (64-bit) and an Android phone on the same Wi-Fi.
 
@@ -135,6 +135,7 @@ What's done, what's being worked on now, and what comes after. There are no date
 - **Minnion Marketplace with official plugins.** Spotify, Timer, System Monitor, Soundboard, Weather, Case Lights and Speech.
 
 **🔨 Now**
+- **Minnionphone for Android: coming soon.** The phone app that shows your deck. It will be free on the website and on GitHub Releases.
 - **Community plugins in the marketplace.** Well under way. Anyone can send a plugin through the "Submit a plugin" form on the [website](https://minnnion.github.io). Each one is checked by hand within 7 days. Approved plugins are signed and listed as Community plugins.
 - **Streaming, Games and Work in the setup.** New choices in Minniondeck Setup, each with its own set of plugins.
 

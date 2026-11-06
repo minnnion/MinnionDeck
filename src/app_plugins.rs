@@ -38,12 +38,8 @@ impl PluginGlue {
     /// Returns a message for the user when plugins were copied.
     pub fn start(root: &std::path::Path, ctx: &egui::Context, run: bool) -> (PluginGlue, Option<String>) {
         let mut glue = PluginGlue { rx: None, live: HashMap::new(), rows: vec![], shown: HashMap::new(), shown_at: 0.0, held: None, turns: HashMap::new(), dev_seen: None };
-        let mut note = None;
+        let note = None;
         if run {
-            let copied = plugins::seed_from_old_app(root);
-            if copied > 0 {
-                note = Some(format!("{copied} plugins were copied from the Minniondeck app"));
-            }
             // makes <data>market.json (where the marketplace is) the first time, so it can be edited
             let _ = crate::backend::market::Source::load(root);
             let (tx, rx) = mpsc::channel();

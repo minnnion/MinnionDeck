@@ -42,6 +42,30 @@ fn main() -> eframe::Result {
             }
         }
     }
+    if let Some(i) = args.iter().position(|a| a == "--add-profile" || a == "--add-profile-file") {
+        let Some(id) = args.get(i + 1) else { eprintln!("Name the plugin."); std::process::exit(2) };
+        let root = backend::paths::Paths::find().root;
+        // --add-profile-file <file.mdprofile> adds a profile file from disk instead
+        let r = if args.iter().any(|a| a == "--add-profile-file") {
+            backend::library::Library::add_profile_file(std::path::Path::new(id))
+        } else {
+            backend::market::download_profile(&root, id).and_then(|path| {
+                let out = backend::library::Library::add_profile_file(&path);
+                let _ = std::fs::remove_file(&path);
+                out
+            })
+        };
+        match r {
+            Ok(name) => {
+                println!("{name} added");
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        }
+    }
     // One copy at a time: a second launch hands what it was asked to open to the first and quits.
     // (Screenshots and self-tests are not the app, so they don't count.)
     if !args.iter().any(|a| a == "--shot" || a == "--selftest") {

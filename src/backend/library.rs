@@ -17,7 +17,7 @@ use serde_json::{Map, Value, json};
 
 use super::actions::Step;
 use super::model::{Look, Media, PageRow, Profile, Sample, Tile, auto_index, auto_name};
-use super::paths::{Paths, old_app_root};
+use super::paths::Paths;
 
 /// Saved this long after the last change.
 const SAVE_AFTER: f64 = 0.6;
@@ -250,9 +250,10 @@ fn read_doc(file: &Path) -> Result<Value, String> {
     Ok(data)
 }
 
-/// First start: copy the Minniondeck app's library, pictures and settings into this app's
-/// folder. The old folder is only read. True when a library was copied.
+/// Was: first start copied the old Tauri app's library. A new install now starts empty.
+#[allow(dead_code)]
 fn copy_from_old_app(p: &Paths) -> bool {
+    let old_app_root = super::paths::old_app_root;
     let Some(old) = old_app_root() else { return false };
     let lib = old.join("library").join("library.json");
     // read as it is, then sealed: nothing of yours is left as a plain file here
@@ -284,9 +285,6 @@ impl Library {
             note = Some(problem);
         }
         let file = paths.library_file();
-        if !file.exists() && copy_from_old_app(&paths) {
-            note = Some("Your profiles were copied from the Minniondeck app".into());
-        }
         let doc = if file.exists() {
             match read_doc(&file) {
                 Ok(d) => d,
@@ -839,6 +837,39 @@ impl Library {
             "images": pick("images", &image_ids, true),
             "plugins": needed,
         }))
+    }
+
+    /// Adds a profile file (.mdprofile) without opening the window: Setup's starter profile for a
+    /// plugin it installed. On a library nobody has touched yet (only the empty "My profile"), the
+    /// new profile takes its place, so a new install shows just the profiles of the plugins chosen.
+    /// Returns the profile's name.
+    pub fn add_profile_file(path: &Path) -> Result<String, String> {
+        let (mut lib, mut s, _) = Library::open();
+        let bundle = super::profile_io::import_from(&lib.paths.media, path)?;
+        let untouched = lib.is_untouched();
+        let (name, _, _) = lib.import_bundle(&mut s, &bundle)?;
+        let new = lib.doc["profiles"].as_array().and_then(|a| a.last()).cloned().unwrap_or(Value::Null);
+        if untouched {
+            if let Some(a) = lib.doc["profiles"].as_array_mut() {
+                a.retain(|p| str_of(p, "id") != "mine");
+            }
+            if let Some(b) = lib.doc["boards"].as_object_mut() {
+                b.remove("Board-1");
+            }
+        }
+        // the first one added is the one shown
+        if untouched {
+            let first_page = fn_first_page(new.get("tree"));
+            lib.doc["active"] = json!({ "prof": str_of(&new, "id"), "page": first_page });
+        }
+        lib.write()?;
+        Ok(name)
+    }
+
+    /// Only the empty "My profile" with its empty page: what a new install starts with.
+    fn is_untouched(&self) -> bool {
+        let profiles = self.doc["profiles"].as_array().map(|a| a.as_slice()).unwrap_or(&[]);
+        profiles.len() == 1 && str_of(&profiles[0], "id") == "mine" && self.doc["boards"].as_object().is_some_and(|b| b.values().all(|v| v.as_array().is_some_and(|a| a.is_empty())))
     }
 
     /// Adds an imported profile (as profile_io::import_from hands it over) with new ids for
@@ -1412,4 +1443,19 @@ mod real_migration {
     fn vault_bytes(f: &Path) -> Vec<u8> {
         crate::backend::vault::read(f, Kind::Save).unwrap()
     }
+}
+
+/// The id of the first page in a profile's tree (folders searched in order).
+fn fn_first_page(tree: Option<&Value>) -> String {
+    for n in tree.and_then(|t| t.as_array()).into_iter().flatten() {
+        if str_of(n, "kind") == "folder" {
+            let id = fn_first_page(n.get("children"));
+            if !id.is_empty() {
+                return id;
+            }
+        } else {
+            return str_of(n, "id").to_string();
+        }
+    }
+    String::new()
 }

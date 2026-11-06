@@ -615,6 +615,7 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
 /// First start: copy the plugins, their saved settings and plugins.json from the Minniondeck
 /// app's folder (read only). A plugin folder is copied whole or not at all, since its signature
 /// covers every file. Returns how many plugins were copied.
+#[allow(dead_code)]
 pub fn seed_from_old_app(root: &Path) -> usize {
     let target = root.join("plugins");
     if target.exists() {

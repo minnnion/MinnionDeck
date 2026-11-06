@@ -1,0 +1,25 @@
+//! The real parts behind the window: what it shows, where it is kept, and what buttons do.
+pub mod actions;
+pub mod autostart;
+pub mod backups;
+pub mod catalog;
+pub mod dialogs;
+pub mod foreground;
+pub mod library;
+pub mod market;
+pub mod media;
+pub mod model;
+pub mod paths;
+pub mod package;
+pub mod plugin_settings;
+pub mod phoneweb;
+pub mod pluginhost;
+pub mod profile_io;
+pub mod plugins;
+pub mod settings;
+pub mod signing;
+pub mod single;
+pub mod tray;
+pub mod updates;
+pub mod util;
+pub mod vault;

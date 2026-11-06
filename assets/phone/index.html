@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Minniondeck">
+<meta name="theme-color" content="#1e2433">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="icon" href="/app-icon-192.png">
+<title>Minniondeck</title>
+<style>
+@font-face { font-family: "Pixelify"; font-weight: 400; src: url(/font-400.ttf); }
+@font-face { font-family: "Pixelify"; font-weight: 600; src: url(/font-600.ttf); }
+@font-face { font-family: "Pixelify"; font-weight: 700; src: url(/font-700.ttf); }
+:root { --ground: #1e2433; --ink: #1e2433; --panel: #2d3142; --tile: #2d3142; --shadow: #10131c; --slate: #9aa6c2; --mint: #5fd0a8; --coral: #ff5a5f; --text: #e4eaf6; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; height: 100%; background: var(--ground); color: var(--text); font-family: "Pixelify", system-ui, sans-serif; overflow: hidden; overscroll-behavior: none; touch-action: manipulation; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+#app { position: fixed; inset: 0; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); display: flex; flex-direction: column; }
+#bar { flex: none; height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 10px; }
+#bar b { flex: 1; text-align: center; font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#bar small { display: block; font-size: 11px; font-weight: 400; color: var(--slate); }
+.bb { min-width: 36px; height: 32px; border: 3px solid var(--text); background: transparent; color: var(--text); font: inherit; font-size: 15px; font-weight: 700; padding: 0 8px; }
+.bb:active { background: var(--panel); }
+.bb[disabled] { opacity: .3; }
+#stage { flex: 1; position: relative; min-height: 0; }
+#grid { position: absolute; }
+.tile { position: absolute; border: 4px solid var(--ink); box-shadow: 4px 4px 0 var(--shadow); overflow: hidden; touch-action: none; transition: transform .06s; }
+.tile.down { transform: translate(3px, 3px); box-shadow: none; }
+.tile .pic, .tile .gifbg { position: absolute; inset: 0; background-position: center; background-repeat: no-repeat; }
+.tile .gifbg { background-size: cover; image-rendering: pixelated; }
+.tile .ico { position: absolute; left: 50%; image-rendering: pixelated; transform: translate(-50%, -50%); }
+.tile .lbl { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); max-width: calc(100% - 12px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; padding: 0 4px; line-height: 1.2; }
+.tile .lbl.back { background: rgba(19, 24, 38, .78); color: #fff; }
+.tile.flash::after { content: ""; position: absolute; inset: 0; background: rgba(255, 255, 255, .35); }
+.empty { position: absolute; border: 3px dashed rgba(154, 166, 194, .3); background: rgba(154, 166, 194, .05); }
+.screen { position: fixed; inset: 0; z-index: 5; background: var(--ground); display: none; align-items: center; justify-content: center; padding: 20px; text-align: center; overflow: auto; }
+.screen.on { display: flex; }
+.card { max-width: 420px; width: 100%; border: 4px solid var(--text); background: var(--panel); box-shadow: 6px 6px 0 var(--shadow); padding: 20px; }
+.card h1 { margin: 0 0 8px; font-size: 22px; }
+.card p { margin: 8px 0; color: var(--slate); font-size: 15px; line-height: 1.4; }
+.card ol { text-align: left; color: var(--text); font-size: 14px; line-height: 1.5; padding-left: 22px; margin: 10px 0; }
+.card input { width: 100%; font: inherit; font-size: 28px; letter-spacing: 6px; text-align: center; padding: 8px; border: 4px solid var(--text); background: var(--ground); color: var(--text); margin: 10px 0; }
+.btn { display: inline-block; font: inherit; font-size: 16px; font-weight: 700; padding: 10px 18px; margin: 6px 4px 0; border: 4px solid var(--text); background: var(--mint); color: #1e2433; box-shadow: 4px 4px 0 var(--shadow); text-decoration: none; }
+.btn.plain { background: transparent; color: var(--text); }
+.btn:active { transform: translate(3px, 3px); box-shadow: none; }
+.big { font-size: 44px; font-weight: 700; letter-spacing: 8px; margin: 6px 0; color: var(--mint); }
+.err { color: var(--coral) !important; }
+#toast { position: fixed; left: 50%; bottom: calc(14px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 8; max-width: 90%; padding: 8px 14px; border: 3px solid var(--text); background: var(--panel); font-size: 14px; display: none; text-align: center; }
+#toast.err { border-color: var(--coral); }
+#lost { z-index: 9; background: rgba(16, 19, 28, .92); }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="bar">
+    <button class="bb" id="prev" aria-label="Previous page">&lt;</button>
+    <b id="title"><span id="pname">Minniondeck</span><small id="prof"></small></b>
+    <button class="bb" id="next" aria-label="Next page">&gt;</button>
+    <button class="bb" id="full" aria-label="Full screen" hidden>[ ]</button>
+  </div>
+  <div id="stage"><div id="grid"></div></div>
+</div>
+
+<div class="screen" id="pair">
+  <div class="card">
+    <h1>Pair with your PC</h1>
+    <div id="pair-ask">
+      <p>Open Minniondeck on your PC, go to Phones, and type the 6-digit code you see there.</p>
+      <input id="code" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="000000" aria-label="Code from the PC">
+      <button class="btn" id="pairgo">Pair</button>
+      <p class="err" id="pairerr"></p>
+      <div id="ios-pair" hidden>
+        <p>On iPhone, for the full app look: tap Share, then Add to Home Screen, open Minniondeck from your Home Screen and type the code there.</p>
+      </div>
+    </div>
+    <div id="pair-wait" hidden>
+      <p>Check that this number is the same on your PC, then press Allow there.</p>
+      <div class="big" id="num"></div>
+      <p>Waiting for the PC…</p>
+    </div>
+  </div>
+</div>
+
+<div class="screen" id="fs">
+  <div class="card">
+    <h1>Make it full screen</h1>
+    <div id="fs-android" hidden>
+      <p>Hide the browser bars so this feels like an app.</p>
+      <button class="btn" id="fsgo">Full screen</button>
+      <p>For a home screen icon: browser menu, then Add to Home screen.</p>
+    </div>
+    <div id="fs-ios" hidden>
+      <p>Safari on iPhone can't hide its bars for a web page. To use it like an app:</p>
+      <ol>
+        <li>Tap the Share button.</li>
+        <li>Choose Add to Home Screen.</li>
+        <li>Open Minniondeck from your Home Screen and type the code from your PC.</li>
+      </ol>
+    </div>
+    <button class="btn plain" id="fsno">Not now</button>
+  </div>
+</div>
+
+<div class="screen" id="lost"><div class="card"><h1>Reconnecting…</h1><p id="lostwhy">Is your PC on and on this Wi-Fi?</p></div></div>
+<div id="toast"></div>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var KEY = "md.token";
+  var ua = navigator.userAgent || "";
+  var isIOS = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  var token = ""; try { token = localStorage.getItem(KEY) || ""; } catch (e) {}
+  var ws = null, retry = 0, deck = null, cur = "", lastPcPage = "", dismissedFs = false, wake = null;
+  var tiles = {}, back = [], ping = null, paired = false, emptyCells = [];
+
+  function standalone() { return (window.matchMedia && matchMedia("(display-mode: standalone), (display-mode: fullscreen)").matches) || navigator.standalone === true; }
+  function fullscreen() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+  function show(id, on) { $(id).classList.toggle("on", on); }
+  function toast(msg, bad) { var t = $("toast"); t.textContent = msg; t.className = bad ? "err" : ""; t.style.display = "block"; clearTimeout(toast.h); toast.h = setTimeout(function () { t.style.display = "none"; }, 2600); }
+  function deviceName() {
+    var m = ua.match(/\(([^)]*)\)/), p = m ? m[1] : "";
+    if (/iPad/.test(p) || (isIOS && matchMedia("(min-width:700px)").matches)) return "iPad";
+    if (/iPhone/.test(p)) return "iPhone";
+    var a = p.match(/Android[^;]*;\s*([^;)]+)/);
+    if (a) return a[1].replace(/Build.*$/, "").trim().slice(0, 28) || "Android phone";
+    return "Phone";
+  }
+  function isTablet() { return Math.min(screen.width, screen.height) >= 600; }
+  function send(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
+
+  // ---- connection ----
+  function connect() {
+    var proto = location.protocol === "https:" ? "wss://" : "ws://";
+    ws = new WebSocket(proto + location.host + "/ws");
+    ws.onopen = function () {
+      retry = 0; show("lost", false);
+      if (token) send({ t: "hello", token: token }); else needPair();
+      clearInterval(ping); ping = setInterval(function () { send({ t: "ping" }); }, 15000);
+    };
+    ws.onmessage = function (e) { var m; try { m = JSON.parse(e.data); } catch (x) { return; } onMsg(m); };
+    ws.onclose = function () {
+      clearInterval(ping); if (paired) show("lost", true);
+      setTimeout(connect, Math.min(4000, 800 + retry++ * 600));
+    };
+    ws.onerror = function () { try { ws.close(); } catch (x) {} };
+  }
+  function needPair() {
+    paired = false; show("pair", true); $("ios-pair").hidden = !(isIOS && !standalone());
+    var h = (location.hash || "").replace("#", "");
+    if (/^\d{6}$/.test(h)) { $("code").value = h; history.replaceState(null, "", location.pathname); doPair(); }
+  }
+  function doPair() {
+    var c = $("code").value.replace(/\D/g, ""); if (c.length !== 6) { $("pairerr").textContent = "Type the 6 digits from your PC."; return; }
+    $("pairerr").textContent = "";
+    send({ t: "pair", code: c, name: deviceName(), model: ua.slice(0, 40), tablet: isTablet() });
+  }
+  function onMsg(m) {
+    switch (m.t) {
+      case "hello": paired = true; show("pair", false); maybeFs(); break;
+      case "unpaired": case "forgotten": token = ""; try { localStorage.removeItem(KEY); } catch (x) {} paired = false; deck = null; clearTiles(); $("pair-ask").hidden = false; $("pair-wait").hidden = true; needPair(); break;
+      case "waiting": $("pair-ask").hidden = true; $("pair-wait").hidden = false; $("num").textContent = m.number; break;
+      case "paired": token = m.token; try { localStorage.setItem(KEY, token); } catch (x) {} paired = true; show("pair", false); $("pair-ask").hidden = false; $("pair-wait").hidden = true; maybeFs(); break;
+      case "denied": $("pair-ask").hidden = false; $("pair-wait").hidden = true; $("pairerr").textContent = "The PC said no."; break;
+      case "refused": $("pairerr").textContent = m.message || "That didn't work."; break;
+      case "snap": paired = true; show("pair", false); show("lost", false); onDeck(m.deck); break;
+      case "result": if (!m.ok) toast(m.message || "That didn't work.", true); else if (m.message && m.show) toast(m.message); break;
+    }
+  }
+
+  // ---- the deck ----
+  function pages() { return deck ? deck.pages.filter(function (p) { return !p.folder; }) : []; }
+  function pageById(id) { return pages().filter(function (p) { return p.id === id; })[0]; }
+  function onDeck(d) {
+    deck = d;
+    var th = d.theme || {};
+    var r = document.documentElement.style;
+    ["ground", "ink", "panel", "tile", "shadow", "slate", "mint", "coral", "text"].forEach(function (k) { if (th[k]) r.setProperty("--" + k, th[k]); });
+    document.body.style.background = th.ground || "";
+    var ps = pages();
+    if (!pageById(cur) || (d.follow && d.page !== lastPcPage)) { if (pageById(d.page)) cur = d.page; else if (ps[0]) cur = ps[0].id; }
+    lastPcPage = d.page;
+    $("prof").textContent = d.profile || "";
+    render();
+    send({ t: "page", page: cur });
+  }
+  function clearTiles() { $("grid").innerHTML = ""; tiles = {}; }
+  // The buttons are always square and as big as the screen allows. Held upright, the grid turns on
+  // its side (5 wide by 3 high shows 3 wide by 5 high), as the preview on the PC does.
+  function layout(cols, rows) {
+    var st = $("stage"), W = st.clientWidth, H = st.clientHeight, pad = 10;
+    var cell = 0, gap = 8;
+    for (var k = 0; k < 4; k++) {
+      cell = Math.floor(Math.min((W - pad * 2 - gap * (cols - 1)) / cols, (H - pad * 2 - gap * (rows - 1)) / rows));
+      gap = Math.max(6, Math.min(14, Math.round(cell * 0.09)));
+    }
+    cell = Math.max(20, cell);
+    var gw = cell * cols + gap * (cols - 1), gh = cell * rows + gap * (rows - 1);
+    var g = $("grid"); g.style.width = gw + "px"; g.style.height = gh + "px"; g.style.left = Math.round((W - gw) / 2) + "px"; g.style.top = Math.round((H - gh) / 2) + "px";
+    return { cell: cell, gap: gap };
+  }
+  function url(path, id, extra) { return path + "?id=" + encodeURIComponent(id) + (extra || "") + "&t=" + encodeURIComponent(token); }
+  function render() {
+    if (!deck) return;
+    var p = pageById(cur); var ps = pages();
+    if (!p) { clearTiles(); $("pname").textContent = "No pages"; return; }
+    var i = ps.indexOf(p);
+    $("pname").textContent = p.name; $("prev").disabled = i <= 0; $("next").disabled = i >= ps.length - 1;
+    $("prev").style.visibility = $("next").style.visibility = ps.length > 1 ? "visible" : "hidden";
+    var st = $("stage"), portrait = st.clientHeight > st.clientWidth * 1.05;
+    var cols = portrait ? p.rows : p.cols, rows = portrait ? p.cols : p.rows;
+    var L = layout(cols, rows), keep = {}, used = {};
+    var at = function (t) { return portrait ? { x: t.y, y: t.x, w: t.h, h: t.w } : { x: t.x, y: t.y, w: t.w, h: t.h }; };
+    emptyCells.forEach(function (e) { e.remove(); }); emptyCells = [];
+    var names = deck.settings && deck.settings.names !== false;
+    p.tiles.forEach(function (t) {
+      keep[t.id] = true;
+      var el = tiles[t.id];
+      if (!el) {
+        el = document.createElement("div"); el.className = "tile"; el.dataset.id = t.id; tiles[t.id] = el; $("grid").appendChild(el);
+        bind(el, t.id);
+      }
+      el._t = t;
+      var a = at(t);
+      for (var yy = a.y; yy < a.y + a.h; yy++) for (var xx = a.x; xx < a.x + a.w; xx++) used[xx + "," + yy] = true;
+      var w = a.w * L.cell + (a.w - 1) * L.gap, h = a.h * L.cell + (a.h - 1) * L.gap;
+      el.style.left = a.x * (L.cell + L.gap) + "px"; el.style.top = a.y * (L.cell + L.gap) + "px"; el.style.width = w + "px"; el.style.height = h + "px";
+      var key = JSON.stringify([t.colour, t.ink, t.icon, t.label, t.pic, t.contain, t.gif, t.gifIcon, w, h, names, deck.settings && deck.settings.dark]);
+      if (el._k !== key) { el._k = key; face(el, t, w, h, names); }
+    });
+    Object.keys(tiles).forEach(function (id) { if (!keep[id]) { tiles[id].remove(); delete tiles[id]; } });
+    // the empty slots, so the whole grid shows
+    for (var r = 0; r < rows; r++) for (var c = 0; c < cols; c++) {
+      if (used[c + "," + r]) continue;
+      var e = document.createElement("div"); e.className = "empty";
+      e.style.left = c * (L.cell + L.gap) + "px"; e.style.top = r * (L.cell + L.gap) + "px"; e.style.width = e.style.height = L.cell + "px";
+      $("grid").insertBefore(e, $("grid").firstChild); emptyCells.push(e);
+    }
+  }
+  function face(el, t, w, h, names) {
+    var m = Math.min(w, h), media = !!(t.pic || (t.gif && !t.gifIcon));
+    el.style.background = t.colour; el.style.borderColor = deck.theme.ink; el.style.color = t.ink;
+    var html = "";
+    if (t.pic) html += '<div class="pic" style="background-image:url(' + url("/media", t.pic).replace(/'/g, "%27") + ');background-size:' + (t.contain ? "contain" : "cover") + '"></div>';
+    if (t.gif && !t.gifIcon) html += '<div class="gifbg" style="background-image:url(' + url("/gif", t.gif).replace(/'/g, "%27") + ')"></div>';
+    var hasLabel = names && t.label, size = Math.floor(m * (hasLabel ? 0.4 : 0.48)), cy = hasLabel ? "46%" : "50%";
+    if (t.gif && t.gifIcon) html += '<img class="ico" alt="" draggable="false" style="top:' + cy + ';height:' + size + 'px" src="' + url("/gif", t.gif) + '">';
+    else if (t.icon) html += '<img class="ico" alt="" draggable="false" style="top:' + cy + ';width:' + size + 'px;height:' + size + 'px" src="' + url("/icon", t.icon, "&c=" + encodeURIComponent((t.ink || "#000000").replace("#", ""))) + '">';
+    if (hasLabel) html += '<div class="lbl' + (media ? " back" : "") + '" style="font-size:' + Math.max(10, Math.min(14, m * 0.085)) + 'px"></div>';
+    el.innerHTML = html;
+    var l = el.querySelector(".lbl"); if (l) l.textContent = t.label;
+  }
+  function go(id) { if (!pageById(id)) return; back.push(cur); if (back.length > 50) back.shift(); cur = id; render(); send({ t: "page", page: cur }); }
+  function bind(el, id) {
+    var down = false, timer = 0, longDone = false, sy = 0, acc = 0, pid = null;
+    el.addEventListener("pointerdown", function (e) {
+      var t = el._t; if (!t || down) return; down = true; longDone = false; sy = e.clientY; acc = 0; pid = e.pointerId;
+      try { el.setPointerCapture(e.pointerId); } catch (x) {}
+      el.classList.add("down"); wakeUp();
+      if (t.run) timer = setTimeout(function () { longDone = true; buzz(25); send({ t: "long", button: id }); }, 550);
+    });
+    el.addEventListener("pointermove", function (e) {
+      var t = el._t; if (!down || !t || !t.knob) return;
+      acc += sy - e.clientY; sy = e.clientY;
+      while (Math.abs(acc) >= 28) { var by = acc > 0 ? 1 : -1; acc -= by * 28; longDone = true; clearTimeout(timer); buzz(8); send({ t: "turn", button: id, by: by }); }
+    });
+    function end(ok) {
+      if (!down) return; down = false; clearTimeout(timer); el.classList.remove("down");
+      var t = el._t; if (!t || !ok) return;
+      if (!longDone) {
+        buzz(15);
+        if (t.nav && t.nav.back) { var b = back.pop(); if (b && pageById(b)) { cur = b; render(); send({ t: "page", page: cur }); } else toast("There is no page to go back to"); }
+        else if (t.nav && t.nav.page) go(t.nav.page);
+        if (t.run) send({ t: "press", button: id });
+      }
+      if (t.run) send({ t: "release", button: id });
+    }
+    el.addEventListener("pointerup", function () { end(true); });
+    el.addEventListener("pointercancel", function () { end(false); });
+    el.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+  }
+  function buzz(ms) { if (deck && deck.settings && deck.settings.vibe && navigator.vibrate) { try { navigator.vibrate(ms); } catch (x) {} } }
+
+  // ---- paging, full screen, keep awake ----
+  $("prev").onclick = function () { var ps = pages(), i = ps.indexOf(pageById(cur)); if (i > 0) { cur = ps[i - 1].id; render(); send({ t: "page", page: cur }); } };
+  $("next").onclick = function () { var ps = pages(), i = ps.indexOf(pageById(cur)); if (i >= 0 && i < ps.length - 1) { cur = ps[i + 1].id; render(); send({ t: "page", page: cur }); } };
+  $("pairgo").onclick = doPair;
+  $("code").addEventListener("keydown", function (e) { if (e.key === "Enter") doPair(); });
+  function enterFs() {
+    var el = document.documentElement, f = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (!f) { toast("This browser can't go full screen. Use Add to Home screen.", true); return; }
+    var p = f.call(el, { navigationUI: "hide" }); if (p && p.then) p.then(function () { try { screen.orientation.lock("landscape").catch(function () {}); } catch (x) {} }).catch(function () { toast("Full screen was refused. Tap the button again.", true); });
+    show("fs", false); dismissedFs = true; wakeUp();
+  }
+  function maybeFs() {
+    var can = !!(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen);
+    $("full").hidden = standalone() || !can;
+    if (dismissedFs || standalone() || fullscreen()) return;
+    $("fs-ios").hidden = !isIOS; $("fs-android").hidden = isIOS || !can; if (isIOS || can) show("fs", true);
+  }
+  $("fsgo").onclick = enterFs; $("full").onclick = enterFs;
+  $("fsno").onclick = function () { dismissedFs = true; show("fs", false); };
+  document.addEventListener("fullscreenchange", function () { $("full").hidden = fullscreen() || standalone(); setTimeout(render, 200); });
+  // Keeping the screen awake: the browser's own way (https only), or a tiny silent video that plays
+  // in a loop, which keeps a phone awake on plain http too.
+  var nsVideo = null;
+  function noSleep() {
+    if (nsVideo) { try { nsVideo.play().catch(function () {}); } catch (x) {} return; }
+    var v = document.createElement("video");
+    v.setAttribute("playsinline", ""); v.setAttribute("muted", ""); v.muted = true; v.loop = true;
+    v.style.cssText = "position:fixed;left:-10px;top:-10px;width:2px;height:2px;opacity:.01;pointer-events:none";
+    [["video/webm", "GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQJChYECGFOAZwEAAAAAAAJREU2bdLpNu4tTq4QVSalmU6yBoU27i1OrhBZUrmtTrIHWTbuMU6uEElTDZ1OsggEyTbuMU6uEHFO7a1OsggI77AEAAAAAAABZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVSalmsCrXsYMPQkBNgIxMYXZmNjMuMS4xMDJXQYxMYXZmNjMuMS4xMDJEiYhAj0AAAAAAABZUrmvXrgEAAAAAAABO14EBc8WId+jptuWdo9GcgQAitZyDdW5kiIEAhoVWX1ZQOIOBASPjg4QL68IA4JCwgRC6gRCagQJVsIRVuYEBVe6BAOwBAAAAAAAAAgAAElTDZ/pzc59jwIBnyJlFo4dFTkNPREVSRIeMTGF2ZjYzLjEuMTAyc3PVY8CLY8WId+jptuWdo9FnyKBFo4dFTkNPREVSRIeTTGF2YzYzLjEuMTAyIGxpYnZweGfIoUWjiERVUkFUSU9ORIeTMDA6MDA6MDEuMDAwMDAwMDAwAB9DtnVAhOeBAKOjgQAAgBACAJ0BKhAAEAAARwiFhYiFhIgCAgAMDWAA/v+rUICjlYEAyACxAQABEBAAGAAYWC/0AAgAAKOVgQGQALEBAAEQEAAYABhYL/QACAAAo5WBAlgAsQEAARAQABgAGFgv9AAIAACjlYEDIACxAQABEBAAGAAYWC/0AAgAABxTu2uRu4+zgQC3iveBAfGCAbHwgQM="], ["video/mp4", "AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAN0bW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAA+gAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAp90cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAA+gAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAABAAAAAQAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAAPoAAAQAAABAAAAAAIXbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAAAoAAAAKABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABwm1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAYJzdGJsAAAAvnN0c2QAAAAAAAAAAQAAAK5hdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAABAAEABIAAAASAAAAAAAAAABFExhdmM2My4xLjEwMiBsaWJ4MjY0AAAAAAAAAAAAAAAAGP//AAAANGF2Y0MBZAAK/+EAF2dkAAqs2V7ARAAAAwAEAAADACg8SJZYAQAGaOvjyyLA/fj4AAAAABBwYXNwAAAAAQAAAAEAAAAUYnRydAAAAAAAABegAAAAAAAAABhzdHRzAAAAAAAAAAEAAAAFAAAIAAAAABRzdHNzAAAAAAAAAAEAAAABAAAAOGN0dHMAAAAAAAAABQAAAAEAABAAAAAAAQAAKAAAAAABAAAQAAAAAAEAAAAAAAAAAQAACAAAAAAcc3RzYwAAAAAAAAABAAAAAQAAAAUAAAABAAAAKHN0c3oAAAAAAAAAAAAAAAUAAALEAAAADAAAAAwAAAAMAAAADAAAABRzdGNvAAAAAAAAAAEAAAOkAAAAYXVkdGEAAABZbWV0YQAAAAAAAAAhaGRscgAAAAAAAAAAbWRpcmFwcGwAAAAAAAAAAAAAAAAsaWxzdAAAACSpdG9vAAAAHGRhdGEAAAABAAAAAExhdmY2My4xLjEwMgAAAAhmcmVlAAAC/G1kYXQAAAKtBgX//6ncRem95tlIt5Ys2CDZI+7veDI2NCAtIGNvcmUgMTY1IHIzMjIzIDA0ODBjYjAgLSBILjI2NC9NUEVHLTQgQVZDIGNvZGVjIC0gQ29weWxlZnQgMjAwMy0yMDI1IC0gaHR0cDovL3d3dy52aWRlb2xhbi5vcmcveDI2NC5odG1sIC0gb3B0aW9uczogY2FiYWM9MSByZWY9MyBkZWJsb2NrPTE6MDowIGFuYWx5c2U9MHgzOjB4MTEzIG1lPWhleCBzdWJtZT03IHBzeT0xIHBzeV9yZD0xLjAwOjAuMDAgbWl4ZWRfcmVmPTEgbWVfcmFuZ2U9MTYgY2hyb21hX21lPTEgdHJlbGxpcz0xIDh4OGRjdD0xIGNxbT0wIGRlYWR6b25lPTIxLDExIGZhc3RfcHNraXA9MSBjaHJvbWFfcXBfb2Zmc2V0PS0yIHRocmVhZHM9MSBsb29rYWhlYWRfdGhyZWFkcz0xIHNsaWNlZF90aHJlYWRzPTAgbnI9MCBkZWNpbWF0ZT0xIGludGVybGFjZWQ9MCBibHVyYXlfY29tcGF0PTAgY29uc3RyYWluZWRfaW50cmE9MCBiZnJhbWVzPTMgYl9weXJhbWlkPTIgYl9hZGFwdD0xIGJfYmlhcz0wIGRpcmVjdD0xIHdlaWdodGI9MSBvcGVuX2dvcD0wIHdlaWdodHA9MiBrZXlpbnQ9MjUwIGtleWludF9taW49NSBzY2VuZWN1dD00MCBpbnRyYV9yZWZyZXNoPTAgcmNfbG9va2FoZWFkPTQwIHJjPWNyZiBtYnRyZWU9MSBjcmY9MjMuMCBxY29tcD0wLjYwIHFwbWluPTAgcXBtYXg9NjkgcXBzdGVwPTQgaXBfcmF0aW89MS40MCBhcT0xOjEuMDAAgAAAAA9liIQAEv/+963fgU3DKz0AAAAIQZokbEP//uAAAAAIQZ5CeIIfq4EAAAAIAZ5hdEP/s4AAAAAIAZ5jakP/s4E="]].forEach(function (s) { var e = document.createElement("source"); e.type = s[0]; e.src = "data:" + s[0] + ";base64," + s[1]; v.appendChild(e); });
+    document.body.appendChild(v); nsVideo = v; try { v.play().catch(function () {}); } catch (x) {}
+  }
+  function wakeUp() {
+    if (!(deck && deck.settings && deck.settings.awake)) return;
+    if (!navigator.wakeLock) { noSleep(); return; }
+    if (wake) return;
+    navigator.wakeLock.request("screen").then(function (l) { wake = l; l.addEventListener("release", function () { wake = null; }); }).catch(function () { noSleep(); });
+  }
+  document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") { wake = null; wakeUp(); } });
+  window.addEventListener("resize", function () { render(); });
+  if (window.ResizeObserver) new ResizeObserver(function () { render(); }).observe($("stage"));
+  if (window.visualViewport) visualViewport.addEventListener("resize", function () { render(); });
+  // and a check twice a second, for browsers that are slow to say the screen changed (turning the phone, the address bar)
+  var lastSize = "";
+  setInterval(function () { var s = $("stage").clientWidth + "x" + $("stage").clientHeight; if (s !== lastSize) { lastSize = s; render(); } }, 500);
+  window.addEventListener("orientationchange", function () { setTimeout(render, 250); });
+  document.addEventListener("gesturestart", function (e) { e.preventDefault(); });
+  document.addEventListener("dblclick", function (e) { e.preventDefault(); });
+  connect();
+})();
+</script>
+</body>
+</html>

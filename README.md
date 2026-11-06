@@ -25,19 +25,9 @@ Get `MinnionDeck_<version>_x64-setup.exe` from [Releases](https://github.com/min
 
 Everything the app saves is encrypted (AES-256-GCM). Your own data (saves, pictures, backups) is sealed with a key made for your install the first time it runs, kept as `data.key` in the app's folder. Keep that file with your data: without it the data can't be opened. Shared profiles use a common key so they open on any PC.
 
-## Build from source
+## Install
 
-Needs Rust (stable) on Windows.
-
-```bash
-cargo build --release
-```
-
-The app is `target\release\minniondeck-ui.exe`. Run from there, it keeps its data in a `build\` folder beside the project.
-
-```bash
-cargo test --release
-```
+MinnionDeck is installed only with the official setup from [Releases](https://github.com/minnnion/MinnionDeck/releases). The setup brings the app, its icon and Windows entries, the plugins you choose and their profiles. The source here is for reading; it is not meant to be built and run on its own.
 
 ## Plugins
 

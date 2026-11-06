@@ -281,7 +281,10 @@ use crate::generated::market_data::{MARKET, MarketPlugin, Release};
 static LIVE: std::sync::RwLock<Option<&'static [MarketPlugin]>> = std::sync::RwLock::new(None);
 
 pub fn plugins() -> &'static [MarketPlugin] {
-    LIVE.read().ok().and_then(|l| *l).unwrap_or(MARKET)
+    static BUILT_IN: std::sync::OnceLock<&'static [MarketPlugin]> = std::sync::OnceLock::new();
+    LIVE.read().ok().and_then(|l| *l).unwrap_or_else(|| {
+        BUILT_IN.get_or_init(|| Box::leak(MARKET.iter().filter(|p| !crate::backend::catalog::is_hidden(p.id)).cloned().collect::<Vec<_>>().into_boxed_slice()))
+    })
 }
 
 /// Whether the list on show is the marketplace's (and not the built-in one).
@@ -351,7 +354,7 @@ fn version_key(v: &str) -> Vec<u64> {
 fn parse_list(text: &str) -> Result<&'static [MarketPlugin], String> {
     let list: List = serde_json::from_str(text).map_err(|_| "The marketplace list couldn't be read.".to_string())?;
     let mut out: Vec<MarketPlugin> = vec![];
-    for e in list.plugins.iter().filter(|e| safe_name(&e.id) && !e.name.is_empty()) {
+    for e in list.plugins.iter().filter(|e| safe_name(&e.id) && !e.name.is_empty() && !crate::backend::catalog::is_hidden(&e.id)) {
         let mut versions: Vec<&ListVersion> = e.versions.iter().collect();
         versions.sort_by(|a, b| version_key(&b.v).cmp(&version_key(&a.v)));
         let releases: Vec<Release> = versions.iter().map(|v| Release { v: leak(&v.v), date: leak(&v.date), title: leak(&v.title), notes: leak_all(&v.notes) }).collect();

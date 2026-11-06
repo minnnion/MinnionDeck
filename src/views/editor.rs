@@ -6,7 +6,7 @@ use crate::backend::model::{COLOURS, Tile};
 use crate::ui::draw::{Cv, lerp, with_alpha};
 use crate::ui::icons;
 use crate::views::deck::{Face, tile_face};
-use crate::backend::catalog::{actions, plugins};
+use crate::backend::catalog::{actions, offered_actions, offered_plugins as plugins};
 use crate::generated::catalog::Action;
 use crate::ui::widgets::scrollbar;
 use egui::{Color32, Rect, Sense, Ui, pos2, vec2};
@@ -928,7 +928,7 @@ fn action_list(cv: &mut Cv, ed: &mut Editor, x: f32, y0: f32, w: f32, now: f64) 
     let mut y = y0;
     let mut q = std::mem::take(&mut ed.act_search);
     let before = q.clone();
-    cv.text_field("actsearch", x, y, w, 40.0, &mut q, 15.0, &format!("Search {} actions, like volume, spotify or gear", actions().len()));
+    cv.text_field("actsearch", x, y, w, 40.0, &mut q, 15.0, &format!("Search {} actions, like volume, timer or gear", offered_actions().len()));
     if q != before {
         ed.list_scroll = 0.0;
     }
@@ -937,7 +937,7 @@ fn action_list(cv: &mut Cv, ed: &mut Editor, x: f32, y0: f32, w: f32, now: f64) 
 
     // sources
     let builtin = actions().iter().filter(|a| a.plugin.is_empty()).count();
-    let mut sources: Vec<(String, &str, usize)> = vec![("All".into(), "grid", actions().len()), ("Built in".into(), "bolt", builtin)];
+    let mut sources: Vec<(String, &str, usize)> = vec![("All".into(), "grid", offered_actions().len()), ("Built in".into(), "bolt", builtin)];
     for p in plugins() {
         sources.push((p.name.to_string(), p.icon, p.count));
     }
@@ -978,8 +978,8 @@ fn action_list(cv: &mut Cv, ed: &mut Editor, x: f32, y0: f32, w: f32, now: f64) 
 
     // the matching actions
     let q = ed.act_search.trim().to_lowercase();
-    let list: Vec<&'static Action> = actions()
-        .iter()
+    let list: Vec<&'static Action> = offered_actions()
+        .into_iter()
         .filter(|a| match ed.source {
             0 => true,
             1 => a.plugin.is_empty(),

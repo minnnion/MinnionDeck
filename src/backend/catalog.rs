@@ -30,7 +30,25 @@ fn live<T>(f: impl Fn(&Live) -> T, fallback: T) -> T {
     LIVE.read().ok().and_then(|l| l.as_ref().map(f)).unwrap_or(fallback)
 }
 
-/// Every action the editor offers.
+/// Plugins kept out of sight for now: not offered in the Marketplace or the Edit button window.
+/// Buttons that already use one still open and run.
+pub const HIDDEN: &[&str] = &["minnioncore_deck"];
+
+pub fn is_hidden(plugin_id: &str) -> bool {
+    HIDDEN.contains(&plugin_id)
+}
+
+/// The actions the Edit button window offers (all of them, less the hidden plugins').
+pub fn offered_actions() -> Vec<&'static Action> {
+    actions().iter().filter(|a| !is_hidden(a.plugin)).collect()
+}
+
+/// The plugins the Edit button window offers.
+pub fn offered_plugins() -> Vec<&'static Plugin> {
+    plugins().iter().filter(|p| !is_hidden(p.id)).collect()
+}
+
+/// Every action there is, hidden plugins' too: for finding the action of a saved button.
 pub fn actions() -> &'static [Action] {
     live(|l| l.actions, gen_catalog::ACTIONS)
 }
@@ -41,8 +59,8 @@ pub fn plugins() -> &'static [Plugin] {
 }
 
 /// The pictures plugins offer for buttons: (plugin name, picture key).
-pub fn plugin_icons() -> &'static [(&'static str, &'static str)] {
-    live(|l| l.icons, gen_catalog::PLUGIN_ICONS)
+pub fn plugin_icons() -> Vec<(&'static str, &'static str)> {
+    live(|l| l.icons, gen_catalog::PLUGIN_ICONS).iter().copied().filter(|(_, key)| !is_hidden(key.split('/').next().unwrap_or(""))).collect()
 }
 
 /// Whether a plugin picture ("plugin/name") can be drawn: built in, or read from the plugin.

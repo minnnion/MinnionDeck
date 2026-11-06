@@ -25,10 +25,12 @@ use serde_json::json;
 use super::plugins::safe_name;
 use super::util::write_atomic;
 
-/// Where the marketplace is, until <data>\market.json says otherwise: the original Minnion
-/// Marketplace repository.
+/// Where the plugins are, until <data>\market.json says otherwise: the Minnion-Plugins
+/// repository (index.json, and plugins/<id>/ with each plugin's .mdplugin files and .mdprofile).
 const DEFAULT_OWNER: &str = "minnnion";
-const DEFAULT_REPO: &str = "Minnion-Marketplace";
+const DEFAULT_REPO: &str = "Minnion-Plugins";
+/// The repository plugins used to come from: a market.json that still names it means the default.
+const OLD_REPO: &str = "/minnnion/Minnion-Marketplace/";
 
 const MAX_INDEX_BYTES: u64 = 2 * 1024 * 1024;
 /// Plugins bigger than this are refused, whatever the index says
@@ -56,7 +58,15 @@ impl Source {
         let file = root.join("market.json");
         let def = Source::default_source();
         match fs::read_to_string(&file) {
-            Ok(text) => Source::parse(&text).unwrap_or(def),
+            Ok(text) => match Source::parse(&text) {
+                // made by an older build with the old address: moved on to the new one
+                Some(s) if s.index_url.contains(OLD_REPO) => {
+                    let _ = write_atomic(&file, serde_json::to_string_pretty(&json!({ "index_url": def.index_url, "files_base": def.files_base })).unwrap_or_default().as_bytes());
+                    def
+                }
+                Some(s) => s,
+                None => def,
+            },
             Err(_) => {
                 let _ = write_atomic(&file, serde_json::to_string_pretty(&json!({ "index_url": def.index_url, "files_base": def.files_base })).unwrap_or_default().as_bytes());
                 def
@@ -476,6 +486,11 @@ mod tests {
         assert_eq!(d, Source::default_source());
         assert!(dir.join("market.json").is_file());
         assert_eq!(Source::load(&dir), d);
+        assert!(d.index_url.contains("/minnnion/Minnion-Plugins/"), "the plugins repository by default");
+        // a market.json from an older build, naming the old repository, moves on to the new one
+        fs::write(dir.join("market.json"), r#"{"index_url":"https://raw.githubusercontent.com/minnnion/Minnion-Marketplace/main/index.json","files_base":"https://raw.githubusercontent.com/minnnion/Minnion-Marketplace/main"}"#).unwrap();
+        assert_eq!(Source::load(&dir), d);
+        assert!(fs::read_to_string(dir.join("market.json")).unwrap().contains("Minnion-Plugins"));
         // a new repository
         fs::write(dir.join("market.json"), r#"{"index_url":"https://raw.githubusercontent.com/me/new/main/index.json","files_base":"https://raw.githubusercontent.com/me/new/main/"}"#).unwrap();
         let s = Source::load(&dir);

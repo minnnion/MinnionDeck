@@ -105,6 +105,8 @@ pub struct App {
     pub grid_menu: bool,
     pub auto_switch: bool,
     pub shot: Option<String>,
+    /// The screenshot was asked for (it arrives a frame later)
+    pub shot_sent: bool,
     pub frames: u32,
     pub pending_view: Option<View>,
     pub wb_hover: [bool; 3],
@@ -179,7 +181,9 @@ impl App {
         }
         let (lib, sample, note) = Library::open();
         // plugins start with the window (not for a screenshot, which must not run anything)
-        let (plug, plug_note) = crate::app_plugins::PluginGlue::start(&lib.paths.root, &egui_ctx, shot.is_none());
+        // (a screenshot of a plugin's window needs its plugin running, so --plugin-window starts them)
+        let run_plugins = shot.is_none() || std::env::args().any(|a| a == "--plugin-window");
+        let (plug, plug_note) = crate::app_plugins::PluginGlue::start(&lib.paths.root, &egui_ctx, run_plugins);
         let note = note.or(plug_note);
         let shot_run = shot.is_none() && !std::env::args().any(|a| a == "--selftest");
         let lib_root = lib.paths.root.clone();
@@ -255,6 +259,7 @@ impl App {
             grid_menu: false,
             auto_switch: true,
             shot,
+            shot_sent: false,
             frames: 0,
             pending_view: None,
             wb_hover: [false; 3],
@@ -846,7 +851,22 @@ impl eframe::App for App {
         // screenshot mode: --shot file.bmp writes frame 8 and quits
         self.frames += 1;
         if let Some(path) = self.shot.clone() {
-            if self.frames == 8 {
+            // --plugin-window <plugin id>: that plugin's window, once its plugin has started
+            let plugin_window = std::env::args().skip_while(|a| a != "--plugin-window").nth(1);
+            let t = ctx.input(|i| i.time);
+            if let Some(id) = &plugin_window {
+                if self.plug_dialog.is_none() && t > 2.0 {
+                    self.plug_dialog = Some(crate::views::plugin_dialog::PlugDialog::new(id));
+                }
+            }
+            let at = std::env::args().skip_while(|a| a != "--shot-at").nth(1).and_then(|v| v.parse::<f64>().ok());
+            let ready = match (&plugin_window, at) {
+                (_, Some(secs)) => t >= secs && self.frames > 8,
+                (Some(_), None) => t > 3.2,
+                _ => self.frames == 8,
+            };
+            if ready && !self.shot_sent {
+                self.shot_sent = true;
                 let cb = egui::ScreenshotCallback::new(move |img: std::sync::Arc<egui::ColorImage>| {
                     write_bmp(&path, &img);
                     std::process::exit(0);

@@ -209,7 +209,7 @@ mod imp {
             if pid == unsafe { GetCurrentProcessId() } {
                 let mut buf = [0u16; 64];
                 let n = unsafe { GetWindowTextW(hwnd, &mut buf) } as usize;
-                if String::from_utf16_lossy(&buf[..n]) == "Minniondeck" {
+                if String::from_utf16_lossy(&buf[..n]).eq_ignore_ascii_case("minniondeck") {
                     MAIN_HWND.store(hwnd.0 as isize, Ordering::SeqCst);
                     unsafe { *(lparam.0 as *mut bool) = true };
                     return false.into();
@@ -370,7 +370,9 @@ mod imp {
                 let class = w!("MinniondeckTray");
                 let wc = WNDCLASSEXW { cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32, lpfnWndProc: Some(proc), hInstance: hinst, lpszClassName: class, ..Default::default() };
                 RegisterClassExW(&wc);
-                let Ok(hwnd) = CreateWindowExW(WINDOW_EX_STYLE(0), class, w!("Minniondeck tray"), WINDOW_STYLE(0), 0, 0, 0, 0, Some(HWND_MESSAGE), None, Some(hinst), None) else { return };
+                // its title names this copy's data folder: a second launch hands over only to the same folder's copy
+                let title = windows::core::HSTRING::from(crate::backend::single::tray_title(&crate::backend::paths::Paths::find().root));
+                let Ok(hwnd) = CreateWindowExW(WINDOW_EX_STYLE(0), class, &title, WINDOW_STYLE(0), 0, 0, 0, 0, Some(HWND_MESSAGE), None, Some(hinst), None) else { return };
                 TRAY_HWND.store(hwnd.0 as isize, Ordering::SeqCst);
                 TASKBAR_CREATED.store(RegisterWindowMessageW(w!("TaskbarCreated")) as isize, Ordering::SeqCst);
                 add_icon(hwnd);

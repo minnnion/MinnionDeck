@@ -71,8 +71,18 @@ fn main() -> eframe::Result {
     if !args.iter().any(|a| a == "--shot" || a == "--selftest") {
         let to_open: Vec<String> = args.iter().skip(1).filter(|a| !a.starts_with("--")).cloned().collect();
         let silent = to_open.is_empty() && args.iter().any(|a| a == backend::autostart::TRAY_ARG);
-        if backend::single::claim(&to_open, silent) == backend::single::Claim::Handed {
-            return Ok(());
+        match backend::single::claim(&to_open, silent) {
+            backend::single::Claim::Handed => return Ok(()),
+            // another install (or a build) is open: two copies would fight over the plugins and the phones
+            backend::single::Claim::Elsewhere(folder) => {
+                if !silent {
+                    use windows::Win32::UI::WindowsAndMessaging::{MB_ICONINFORMATION, MB_OK, MessageBoxW};
+                    let text = format!("MinnionDeck is already open from another folder:\n{folder}\n\nClose that one first (right-click its tray icon › Quit), then start this one again.");
+                    unsafe { MessageBoxW(None, &windows::core::HSTRING::from(text.as_str()), &windows::core::HSTRING::from("MinnionDeck"), MB_OK | MB_ICONINFORMATION) };
+                }
+                return Ok(());
+            }
+            backend::single::Claim::First => {}
         }
     }
     // This install's data key, before anything reads or writes saved data

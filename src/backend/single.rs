@@ -4,6 +4,9 @@
 //! that is running, and quits.
 //!
 //! The running copy is found by its tray's hidden window, and told with a WM_COPYDATA message.
+//! That window's title names the copy's data folder, so a launch only hands over to a copy that
+//! uses the same folder. A copy from another folder (a second install, or the developer's build)
+//! is never handed someone else's launch: the launch says which folder is open and stops.
 #![allow(dead_code)]
 
 /// What starting up found.
@@ -13,6 +16,17 @@ pub enum Claim {
     First,
     /// Another copy was told and this one should quit
     Handed,
+    /// A copy that uses another data folder is running (its folder): this one can't start
+    Elsewhere(String),
+}
+
+/// The tray window's title: it names the data folder the copy uses.
+pub fn tray_title(root: &std::path::Path) -> String {
+    format!("MinnionDeck tray|{}", root.display().to_string().to_lowercase())
+}
+
+fn my_title() -> String {
+    tray_title(&crate::backend::paths::Paths::find().root)
 }
 
 const MUTEX: &str = "Local\\Minniondeck.Rust.SingleInstance";
@@ -24,7 +38,7 @@ pub const QUIT: &str = "--quit";
 
 /// Tells a running copy to save and close. Returns false when none is running.
 pub fn ask_to_quit() -> bool {
-    imp::hand_over(&[QUIT.to_string()], 2)
+    imp::hand_over(&my_title(), &[QUIT.to_string()], 2)
 }
 
 /// Claims the app for this process, or hands `args` to the copy that already has it. `silent`: a
@@ -34,7 +48,7 @@ pub fn claim(args: &[String], silent: bool) -> Claim {
 }
 
 pub fn claim_named(name: &str, args: &[String], silent: bool) -> Claim {
-    imp::claim(name, args, silent)
+    imp::claim(name, &my_title(), args, silent)
 }
 
 #[cfg(windows)]
@@ -45,12 +59,12 @@ mod imp {
     use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HWND, LPARAM, WPARAM};
     use windows::Win32::System::DataExchange::COPYDATASTRUCT;
     use windows::Win32::System::Threading::CreateMutexW;
-    use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, HWND_MESSAGE, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_COPYDATA};
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, GetWindowTextW, HWND_MESSAGE, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_COPYDATA};
     use windows::core::{HSTRING, w};
 
     use super::{Claim, MAGIC};
 
-    pub fn claim(name: &str, args: &[String], silent: bool) -> Claim {
+    pub fn claim(name: &str, title: &str, args: &[String], silent: bool) -> Claim {
         let handle = unsafe { CreateMutexW(None, true, &HSTRING::from(name)) };
         let Ok(handle) = handle else { return Claim::First };
         if unsafe { GetLastError() } != ERROR_ALREADY_EXISTS {
@@ -61,22 +75,44 @@ mod imp {
         unsafe {
             let _ = windows::Win32::Foundation::CloseHandle(handle);
         }
-        if silent {
-            return Claim::Handed;
+        // which copy is running: this folder's, or another one's
+        for _ in 0..20 {
+            if find(Some(title)).is_some() {
+                if silent {
+                    return Claim::Handed;
+                }
+                return if hand_over(title, args, 4) { Claim::Handed } else { Claim::First };
+            }
+            if let Some(h) = find(None) {
+                let mut buf = [0u16; 600];
+                let n = unsafe { GetWindowTextW(h, &mut buf) } as usize;
+                let other = String::from_utf16_lossy(&buf[..n]);
+                // an older copy's window doesn't name its folder
+                return Claim::Elsewhere(other.strip_prefix("MinnionDeck tray|").unwrap_or("(an older MinnionDeck)").to_string());
+            }
+            std::thread::sleep(Duration::from_millis(250));
         }
-        if hand_over(args, 20) { Claim::Handed } else { Claim::First }
+        // the other copy is still starting, or has just quit: this one starts
+        Claim::First
+    }
+
+    /// The tray window of the copy with this title (or of any copy, with None).
+    fn find(title: Option<&str>) -> Option<HWND> {
+        let t = title.map(HSTRING::from);
+        let hwnd = match &t {
+            Some(t) => unsafe { FindWindowExW(Some(HWND_MESSAGE), None, w!("MinniondeckTray"), t) },
+            None => unsafe { FindWindowExW(Some(HWND_MESSAGE), None, w!("MinniondeckTray"), None) },
+        };
+        hwnd.ok().filter(|h| !h.0.is_null())
     }
 
     /// Tells the running copy; its tray window may not be up yet if it is just starting.
-    pub fn hand_over(args: &[String], tries: u32) -> bool {
+    pub fn hand_over(title: &str, args: &[String], tries: u32) -> bool {
         for _ in 0..tries {
-            let hwnd = unsafe { FindWindowExW(Some(HWND_MESSAGE), None, w!("MinniondeckTray"), None) };
-            if let Ok(h) = hwnd {
-                if !h.0.is_null() {
-                    // one message for each thing to open, or one empty one: show the window
-                    let list: Vec<String> = if args.is_empty() { vec![String::new()] } else { args.to_vec() };
-                    return list.iter().all(|a| send(h, a));
-                }
+            if let Some(h) = find(Some(title)) {
+                // one message for each thing to open, or one empty one: show the window
+                let list: Vec<String> = if args.is_empty() { vec![String::new()] } else { args.to_vec() };
+                return list.iter().all(|a| send(h, a));
             }
             std::thread::sleep(Duration::from_millis(250));
         }
@@ -95,10 +131,10 @@ mod imp {
 #[cfg(not(windows))]
 mod imp {
     use super::Claim;
-    pub fn claim(_: &str, _: &[String], _: bool) -> Claim {
+    pub fn claim(_: &str, _: &str, _: &[String], _: bool) -> Claim {
         Claim::First
     }
-    pub fn hand_over(_: &[String], _: u32) -> bool {
+    pub fn hand_over(_: &str, _: &[String], _: u32) -> bool {
         false
     }
 }

@@ -32,7 +32,7 @@ fn live<T>(f: impl Fn(&Live) -> T, fallback: T) -> T {
 
 /// Plugins kept out of sight for now: not offered in the Marketplace or the Edit button window.
 /// Buttons that already use one still open and run.
-pub const HIDDEN: &[&str] = &["minnioncore_deck"];
+pub const HIDDEN: &[&str] = &["minnioncore_deck", "minnion_lights", "minnion_speech"];
 
 pub fn is_hidden(plugin_id: &str) -> bool {
     HIDDEN.contains(&plugin_id)

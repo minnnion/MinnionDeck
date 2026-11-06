@@ -5,7 +5,7 @@
 # MinnionDeck
 
 **A Stream Deck for your Windows PC, with no hardware to buy.**
-Big square buttons for music, apps, keys, lights, games and more, on your screen and on any phone.
+Big square buttons for apps, keys, sounds, timers, weather, PC lights and more, on your screen and on any phone.
 
 [![Release](https://img.shields.io/github/v/release/minnnion/MinnionDeck?color=5fd0a8&label=release)](https://github.com/minnnion/MinnionDeck/releases/latest)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-7cc4ff)
@@ -14,7 +14,7 @@ Big square buttons for music, apps, keys, lights, games and more, on your screen
 
 **[Download](https://github.com/minnnion/MinnionDeck/releases/latest)** · **[Website](https://minnnion.github.io)** · **[Features](#features)** · **[How it works](#how-it-works)**
 
-<img src="docs/screenshots/deck.png" alt="MinnionDeck showing the Spotify profile" width="880">
+<img src="docs/screenshots/deck.png" alt="MinnionDeck showing the Case Lights profile" width="880">
 
 </div>
 
@@ -22,22 +22,22 @@ Big square buttons for music, apps, keys, lights, games and more, on your screen
 
 ## Why MinnionDeck
 
-Streamers, gamers, flight-sim pilots and anyone who does the same things on a PC over and over want **one press for each job**. A hardware deck is one way to do that, but it costs money, takes desk space and only works where it's plugged in.
+Streamers, gamers and anyone who does the same things on a PC over and over want **one press for each job**. A hardware deck is one way to do that, but it costs money, takes desk space and only works where it's plugged in.
 
 MinnionDeck gives you the same thing in software:
 
 - **No hardware.** Your PC screen is the deck, and so is any phone or tablet you already own.
 - **Nothing to install on the phone.** Scan a QR code, press Allow on the PC, and your buttons are on the phone.
 - **Made to look good.** A crisp pixel-art style, with your own pictures and GIFs if you prefer.
-- **Free plugins.** Spotify, a soundboard, timers, weather, PC case lights, Microsoft Flight Simulator and more, each with a ready-made profile.
+- **Free plugins.** A soundboard, timers, weather, a live system monitor, PC case lights, music and more, each with a ready-made profile.
 - **Your data stays yours.** Everything lives in one folder you choose, encrypted with a key made for your install.
 
 ## Who it's for
 
 | | |
 |---|---|
-| **Streamers** | Scene and sound buttons, a soundboard, music controls, all on a phone beside the camera. |
-| **Gamers and sim pilots** | Whole cockpits of switches and knobs for Microsoft Flight Simulator 2024 and the Fenix A320, page after page. |
+| **Streamers** | Sound effects, scene keys and timers, all on a phone beside the camera. |
+| **Gamers** | Key combinations and macros, a soundboard, and CPU, GPU and memory at a glance while you play. |
 | **Everyday work** | Open apps and websites, type text you use often, mute, change volume, run key combinations. |
 | **Home office and desk setups** | Change your PC case lights, keep an eye on CPU, GPU and memory, start a focus timer. |
 
@@ -53,12 +53,25 @@ MinnionDeck gives you the same thing in software:
 
 <div align="center">
 <img src="docs/screenshots/editor.png" alt="Making a new button: choosing what it does" width="820">
-<br><sub>Making a button: give it a name, pick what it does from built-in actions and plugins, and see it as you go.</sub>
+<br><sub>Making a button: pick what it does, fill in the details, and give it a look for each state (here a countdown: Stopped and Running).</sub>
 </div>
+
+### Decks for everything
+
+<table>
+<tr>
+<td align="center" width="50%"><img src="docs/screenshots/timer.png" alt="Timer profile"><br><sub><b>Timer</b>: focus, stopwatch, clock and one-press countdowns</sub></td>
+<td align="center" width="50%"><img src="docs/screenshots/weather.png" alt="Weather profile"><br><sub><b>Weather</b>: now, high and low, rain, wind, air quality</sub></td>
+</tr>
+<tr>
+<td align="center" width="50%"><img src="docs/screenshots/system-monitor.png" alt="System Monitor profile"><br><sub><b>System Monitor</b>: CPU, GPU, memory, disk and network, live</sub></td>
+<td align="center" width="50%"><img src="docs/screenshots/soundboard.png" alt="Soundboard profile"><br><sub><b>Soundboard</b>: a sound on every key, and one to stop them all</sub></td>
+</tr>
+</table>
 
 ### Profiles that switch by themselves
 
-Keep a profile for each thing you do. Turn on **Switch automatically** and MinnionDeck changes profile when an app such as Spotify or your game comes to the front. Export a profile as a `.mdprofile` file to share it; double-click one to add it.
+Keep a profile for each thing you do. Turn on **Switch automatically** and MinnionDeck changes profile when an app such as your game, browser or music player comes to the front. Export a profile as a `.mdprofile` file to share it; double-click one to add it.
 
 <div align="center">
 <img src="docs/screenshots/profiles.png" alt="The Profiles page" width="820">
@@ -73,26 +86,25 @@ Open the **Phones** page, scan the QR code with your phone's camera and open the
 - Add it to your home screen and it opens full screen, like an app.
 
 <div align="center">
-<img src="docs/screenshots/phone-preview.png" alt="The phone preview on the Phones page" width="560">
+<img src="docs/screenshots/phone-preview.png" alt="The phone preview on the Phones page, in portrait" width="460">
 </div>
 
 ### Plugins from the Marketplace
 
-Plugins add whole sets of buttons. Install them from the **Marketplace** page inside the app, or tick them in the setup. Each one comes with a ready-made profile, and every download is checked against its SHA-256 before it installs.
+Plugins add whole sets of buttons. Install them from the **Marketplace** page inside the app (open one to see what it adds and what's new), or tick them in the setup. Each one comes with a ready-made profile, and every download is checked against its SHA-256 before it installs.
 
 | Plugin | What it adds |
 |---|---|
-| **Spotify** | Play or pause, next and previous, like, volume and a live Now playing screen. |
-| **Soundboard** | Play sound files from your buttons. |
-| **Timer** | Clock, countdown, stopwatch and focus timer. |
-| **Weather** | Live weather on your buttons. |
-| **System Monitor** | CPU, GPU, memory, disk, network and the busiest app, live. |
 | **Case Lights** | Finds out why your PC's case lights act up, and sets them for you. |
-| **MSFS 2024** | Flight controls, views and cameras for Microsoft Flight Simulator 2024. |
+| **System Monitor** | CPU, GPU, memory, disk, network and the busiest app, live. |
+| **Timer** | Clock, countdown, stopwatch and focus timer. |
+| **Weather** | Live weather for your town on your buttons. |
+| **Soundboard** | Play sound files from your buttons. |
 | **Speech** | Reads text aloud with natural voices, on your PC. |
+| **Spotify** | Play or pause, skip, like, volume and what's playing. |
 
 <div align="center">
-<img src="docs/screenshots/marketplace.png" alt="The Marketplace page" width="820">
+<img src="docs/screenshots/marketplace.png" alt="A plugin's details in the Marketplace" width="820">
 </div>
 
 ### Made to live on your PC
@@ -142,7 +154,7 @@ The source is here to read. MinnionDeck is meant to be installed with the offici
 
 <div align="center">
 <br>
-<img src="docs/screenshots/deck-light.png" alt="MinnionDeck in the light theme" width="720">
+<img src="docs/screenshots/deck-light.png" alt="MinnionDeck in the light theme, showing the Weather profile" width="720">
 <br><br>
 <sub>Made by <a href="https://github.com/minnnion">minnnion</a> · <a href="https://minnnion.github.io">minnnion.github.io</a></sub>
 </div>

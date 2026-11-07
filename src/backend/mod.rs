@@ -23,3 +23,4 @@ pub mod tray;
 pub mod updates;
 pub mod util;
 pub mod vault;
+pub mod websync;

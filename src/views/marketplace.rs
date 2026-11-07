@@ -147,7 +147,10 @@ fn tick(app: &mut App, now: f64, ctx: &egui::Context) {
             app.market_job = None;
             match r {
                 Ok(done) => match was {
-                    Some(_) => app.say(&format!("{} updated to {}", p.name, done.version), now),
+                    Some(_) => {
+                        app.say(&format!("{} updated to {}", p.name, done.version), now);
+                        app.profile_sync(p.id, true, true);
+                    }
                     None => app.say(&format!("{} installed. Its buttons are in Edit button.", p.name), now),
                 },
                 Err(e) => app.say(&format!("Could not install {}: {e}", p.name), now),

@@ -60,11 +60,23 @@ impl App {
         self.tray.on() && self.st.get("close").copied().unwrap_or(0) == 0 && !tray::quitting()
     }
 
+    /// The window went to the tray. The first time, Windows is asked to say so, since closing the
+    /// window doesn't quit the app (Settings › General › When you close the window).
+    fn to_tray(&mut self, ctx: &egui::Context) {
+        ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+        tray::hop();
+        let told = self.lib.paths.root.join("logs").join("tray-note-shown");
+        if !told.exists() {
+            tray::notify("MinnionDeck is still running", "Your buttons and phones keep working. To quit, right-click the minnion in the tray and choose Quit. You can change this in Settings › General.");
+            let _ = std::fs::create_dir_all(self.lib.paths.root.join("logs"));
+            let _ = std::fs::write(&told, b"");
+        }
+    }
+
     /// The close button was pressed: to the tray, or really closing.
     pub fn request_close(&mut self, ctx: &egui::Context) {
         if self.keep_running() {
-            ctx.send_viewport_cmd(ViewportCommand::Visible(false));
-            tray::hop();
+            self.to_tray(ctx);
         } else {
             ctx.send_viewport_cmd(ViewportCommand::Close);
         }
@@ -114,8 +126,7 @@ impl App {
         // Alt+F4 or the taskbar's Close: the same as the close button
         if ctx.input(|i| i.viewport().close_requested()) && self.keep_running() {
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
-            ctx.send_viewport_cmd(ViewportCommand::Visible(false));
-            tray::hop();
+            self.to_tray(ctx);
         }
         // Settings › Start with Windows changed
         if self.tray.on() {

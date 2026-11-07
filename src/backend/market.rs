@@ -267,6 +267,18 @@ pub fn download(root: &Path, id: &str, version: Option<&str>, progress: impl Fn(
 
 /// Downloads the profile that comes with a plugin and returns its path (for profile_io::import_from).
 pub fn download_profile(root: &Path, id: &str) -> Result<PathBuf, String> {
+    download_plugin_profile(root, id).map(|d| d.path)
+}
+
+/// A plugin's profile as downloaded: the file, its SHA-256 (as the list gives it, checked) and
+/// the plugin's name.
+pub struct ProfileDownload {
+    pub path: PathBuf,
+    pub sha: String,
+    pub plugin_name: String,
+}
+
+pub fn download_plugin_profile(root: &Path, id: &str) -> Result<ProfileDownload, String> {
     let src = Source::load(root);
     let mine = DOWNLOAD.fetch_add(1, Ordering::SeqCst) + 1;
     let (e, _, _, _) = find(fetch_index(&src)?, id, None)?;
@@ -275,11 +287,20 @@ pub fn download_profile(root: &Path, id: &str) -> Result<PathBuf, String> {
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let file = dir.join(format!("{}-profile.mdprofile", e.id));
     let resp = get(&src.profile_url(&e.id, &p.file), &format!("The {} profile", p.name))?;
-    if let Err(err) = save_checked(resp.into_reader(), &file, p.size, &p.sha256.to_ascii_lowercase(), mine, |_| {}) {
+    let sha = p.sha256.to_ascii_lowercase();
+    if let Err(err) = save_checked(resp.into_reader(), &file, p.size, &sha, mine, |_| {}) {
         let _ = fs::remove_file(&file);
         return Err(err);
     }
-    Ok(file)
+    Ok(ProfileDownload { path: file, sha, plugin_name: e.name })
+}
+
+/// The SHA-256 of each plugin's ready-made profile, from the list last read (live or the copy kept).
+static PROFILE_SHA: std::sync::RwLock<Option<std::collections::HashMap<String, String>>> = std::sync::RwLock::new(None);
+
+/// The SHA-256 of plugin `id`'s ready-made profile as the marketplace lists it now.
+pub fn profile_sha(id: &str) -> Option<String> {
+    PROFILE_SHA.read().ok()?.as_ref()?.get(id).cloned()
 }
 
 // ===== The live list =====
@@ -388,6 +409,11 @@ fn parse_list(text: &str) -> Result<&'static [MarketPlugin], String> {
     }
     if out.is_empty() {
         return Err("The marketplace has no plugins in it yet.".into());
+    }
+    let shas: std::collections::HashMap<String, String> =
+        list.plugins.iter().filter_map(|e| e.profile.as_ref().filter(|p| profile_ok(p)).map(|p| (e.id.clone(), p.sha256.to_ascii_lowercase()))).collect();
+    if let Ok(mut m) = PROFILE_SHA.write() {
+        *m = Some(shas);
     }
     Ok(Box::leak(out.into_boxed_slice()))
 }

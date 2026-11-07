@@ -86,6 +86,11 @@ pub fn hop() {
     imp::hop();
 }
 
+/// A Windows notification from the tray icon (title, text).
+pub fn notify(title: &str, text: &str) {
+    imp::notify(title, text);
+}
+
 /// Whether Windows has the icon (the tray thread is up and the icon was accepted).
 pub fn is_up() -> bool {
     imp::is_up()
@@ -386,6 +391,25 @@ mod imp {
             .ok();
     }
 
+    pub fn notify(title: &str, text: &str) {
+        let h = TRAY_HWND.load(Ordering::SeqCst);
+        if h == 0 {
+            return;
+        }
+        let mut nid = data(HWND(h as *mut _), None, None);
+        nid.uFlags |= windows::Win32::UI::Shell::NIF_INFO;
+        nid.dwInfoFlags = windows::Win32::UI::Shell::NIIF_INFO;
+        for (i, u) in title.encode_utf16().take(63).enumerate() {
+            nid.szInfoTitle[i] = u;
+        }
+        for (i, u) in text.encode_utf16().take(255).enumerate() {
+            nid.szInfo[i] = u;
+        }
+        unsafe {
+            let _ = Shell_NotifyIconW(NIM_MODIFY, &nid);
+        }
+    }
+
     pub fn hop() {
         let h = TRAY_HWND.load(Ordering::SeqCst);
         if h == 0 || HOPPING.swap(true, Ordering::SeqCst) {
@@ -437,6 +461,7 @@ mod imp {
     use std::sync::mpsc::Sender;
     pub fn start(_: Sender<TrayMsg>, _: Box<dyn Fn() + Send + Sync>) {}
     pub fn hop() {}
+    pub fn notify(_: &str, _: &str) {}
     pub fn is_up() -> bool {
         false
     }

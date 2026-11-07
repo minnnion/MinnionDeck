@@ -251,6 +251,15 @@ pub fn import(media_dir: &Path, path: &Path, kind: Kind) -> Result<Value, String
         return Err("That file is larger than 25 MB.".into());
     }
     let bytes = fs::read(path).map_err(|_| "That file could not be opened.".to_string())?;
+    let name: String = path.file_stem().and_then(|s| s.to_str()).unwrap_or("Picture").chars().take(24).collect();
+    import_bytes(media_dir, &bytes, &name, kind)
+}
+
+/// The same, for a picture or GIF that arrived as bytes (the website's Sync), called `name`.
+pub fn import_bytes(media_dir: &Path, bytes: &[u8], name: &str, kind: Kind) -> Result<Value, String> {
+    if bytes.len() as u64 > MAX_MEDIA_BYTES {
+        return Err("That file is larger than 25 MB.".into());
+    }
     let ext = match image::guess_format(&bytes) {
         Ok(image::ImageFormat::Png) => "png",
         Ok(image::ImageFormat::Jpeg) => "jpg",
@@ -262,16 +271,16 @@ pub fn import(media_dir: &Path, path: &Path, kind: Kind) -> Result<Value, String
         return Err("That isn't a GIF file. Make one on the website with Download GIF.".into());
     }
     // it must open, so nothing is kept that can't be drawn
-    let (w, h) = image::load_from_memory(&bytes).map(|i| (i.width(), i.height())).map_err(|_| "That picture is damaged and couldn't be opened.".to_string())?;
-    let name: String = path.file_stem().and_then(|s| s.to_str()).unwrap_or("Picture").chars().take(24).collect();
+    let (w, h) = image::load_from_memory(bytes).map(|i| (i.width(), i.height())).map_err(|_| "That picture is damaged and couldn't be opened.".to_string())?;
+    let name: String = name.chars().take(24).collect();
     let id = match kind {
         Kind::Picture => format!("u:{}", base36(now_ms())),
         Kind::Gif => format!("f{}", base36(now_ms())),
     };
     let stem: String = id.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).take(40).collect();
-    let file = format!("{stem}-{}.{ext}", &sha256_hex(&bytes)[..12]);
+    let file = format!("{stem}-{}.{ext}", &sha256_hex(bytes)[..12]);
     if file_for(media_dir, &file).is_none() {
-        store(media_dir, &file, &bytes)?;
+        store(media_dir, &file, bytes)?;
     }
     Ok(match kind {
         Kind::Picture => json!({ "id": id, "name": name, "media": file, "ar": w as f64 / h.max(1) as f64 }),
@@ -288,11 +297,6 @@ fn base36(mut t: u64) -> String {
     s
 }
 
-/// The website's page for making pictures ("images") or GIFs ("gifs").
-pub fn site_page(page: &str) -> String {
-    // ?app: the site looks for a tab of itself that is already open and turns that one to the page
-    format!("{SITE}/?app#{page}")
-}
 
 /// Tests that fill the shared lists take turns.
 #[cfg(test)]
@@ -356,6 +360,5 @@ mod tests {
         assert_eq!(hex("#ff8800"), Some([255, 136, 0, 255]));
         assert_eq!(hex("#f80"), Some([255, 136, 0, 255]));
         assert_eq!(hex("red"), None);
-        assert_eq!(site_page("gifs"), "https://minnnion.github.io/?app#gifs");
     }
 }

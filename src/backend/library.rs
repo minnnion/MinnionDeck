@@ -548,6 +548,10 @@ impl Library {
     fn copy_profile(&mut self, src: &Value) -> Value {
         let mut p = src.clone();
         p["id"] = json!(uid("pr-"));
+        // a copy is the user's own: it doesn't follow the plugin's profile
+        if let Some(o) = p.as_object_mut() {
+            o.remove("from");
+        }
         let mut map: HashMap<String, String> = HashMap::new();
         let mut boards: Vec<(String, String)> = vec![];
         fn walk(nodes: &mut [Value], map: &mut HashMap<String, String>, boards: &mut Vec<(String, String)>) {
@@ -761,7 +765,7 @@ impl Library {
         let idx = self.profile_index(profile_id).ok_or("That profile isn't in the library.")?;
         let mut profile = self.doc["profiles"][idx].clone();
         if let Some(o) = profile.as_object_mut() {
-            for k in ["imported", "trusted", "needs"] {
+            for k in ["imported", "trusted", "needs", "from"] {
                 o.remove(k);
             }
         }
@@ -846,8 +850,15 @@ impl Library {
     pub fn add_profile_file(path: &Path) -> Result<String, String> {
         let (mut lib, mut s, _) = Library::open();
         let bundle = super::profile_io::import_from(&lib.paths.media, path)?;
+        let name = Library::add_profile_file_to(&mut lib, &mut s, &bundle)?;
+        lib.write()?;
+        Ok(name)
+    }
+
+    /// add_profile_file on a library that is already open (it isn't written here).
+    fn add_profile_file_to(lib: &mut Library, s: &mut Sample, bundle: &Value) -> Result<String, String> {
         let untouched = lib.is_untouched();
-        let (name, _, _) = lib.import_bundle(&mut s, &bundle)?;
+        let (name, _, _) = lib.import_bundle(s, bundle)?;
         let new = lib.doc["profiles"].as_array().and_then(|a| a.last()).cloned().unwrap_or(Value::Null);
         if untouched {
             if let Some(a) = lib.doc["profiles"].as_array_mut() {
@@ -862,7 +873,6 @@ impl Library {
             let first_page = fn_first_page(new.get("tree"));
             lib.doc["active"] = json!({ "prof": str_of(&new, "id"), "page": first_page });
         }
-        lib.write()?;
         Ok(name)
     }
 
@@ -1122,6 +1132,297 @@ fn tile_from(b: &Value, page: usize, designs: &HashMap<String, Value>) -> Tile {
     t
 }
 
+
+// ===== Profiles that come with a plugin =====
+//
+// A ready-made profile from the marketplace remembers where it came from in its "from" entry:
+// { "plugin": id, "sha": the .mdprofile's SHA-256, "base": what it looked like then }. When the
+// plugin's profile changes, an untouched profile is updated in place (same id, name, colour,
+// icon, rule and trust; a backup first) and an edited one is left for the user to decide.
+
+/// What became of one profile when its plugin's profile changed.
+pub enum PluginProfile {
+    /// Already the same as the new one (now linked to it)
+    Same,
+    /// Untouched since it was added, so it was updated: its name
+    Updated(String),
+    /// Changed by the user (or added before profiles were linked): (its id, its name)
+    Edited(String, String),
+}
+
+/// "Spotify", "Spotify 2", "Spotify 3"... for a plugin profile called "Spotify".
+fn same_profile_name(name: &str, file_name: &str) -> bool {
+    let base: String = file_name.chars().take(24).collect();
+    let short: String = file_name.chars().take(20).collect();
+    !file_name.is_empty() && (name == base || name.strip_prefix(&format!("{short} ")).is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())))
+}
+
+fn node_name(n: &Value) -> String {
+    match str_of(n, "name") {
+        "" if str_of(n, "kind") == "folder" => "Folder".into(),
+        "" => "Page".into(),
+        x => x.to_string(),
+    }
+}
+
+/// A profile as the user sees it, as one hash: page and folder names and order, page sizes, and
+/// every button as the window shows it, with what doesn't count left out (ids, the look showing
+/// now, which copy of a picture it uses) and Go to page known by the page's name. The same for a
+/// profile in the library and one in a file, so the two can be compared.
+fn content_hash(tree: &[Value], buttons_of: &dyn Fn(&Value) -> Vec<Value>, designs: &HashMap<String, Value>) -> String {
+    fn names_of(nodes: &[Value], m: &mut HashMap<String, String>) {
+        for n in nodes {
+            m.insert(str_of(n, "id").to_string(), node_name(n));
+            if let Some(c) = n.get("children").and_then(|c| c.as_array()) {
+                names_of(c, m);
+            }
+        }
+    }
+    fn walk(nodes: &[Value], depth: usize, h: &mut DefaultHasher, page: &mut dyn FnMut(&Value, &mut DefaultHasher)) {
+        for n in nodes {
+            let folder = str_of(n, "kind") == "folder";
+            (depth, folder, node_name(n)).hash(h);
+            if folder {
+                walk(n.get("children").and_then(|c| c.as_array()).map(|c| c.as_slice()).unwrap_or(&[]), depth + 1, h, page);
+            } else {
+                (num_of(n, "cols", 4).clamp(1, 12), num_of(n, "rows", 3).clamp(1, 12)).hash(h);
+                page(n, h);
+            }
+        }
+    }
+    let mut names = HashMap::new();
+    names_of(tree, &mut names);
+    let by_name = |v: &str| names.get(v).cloned().unwrap_or_else(|| v.to_string());
+    let media = |s: &mut String| {
+        if !s.is_empty() {
+            *s = "media".into();
+        }
+    };
+    let pic = |s: &mut String| {
+        if s.starts_with("u:") {
+            *s = "u:".into();
+        }
+    };
+    let mut page = |n: &Value, h: &mut DefaultHasher| {
+        let mut tiles: Vec<(Tile, Vec<(String, String)>)> = buttons_of(n)
+            .iter()
+            .map(|b| {
+                let mut t = tile_from(b, 0, designs);
+                t.id.clear();
+                t.src.clear();
+                t.cur = 0;
+                media(&mut t.media.pic);
+                media(&mut t.media.gif);
+                pic(&mut t.image);
+                pic(&mut t.icon);
+                for l in t.more.iter_mut() {
+                    media(&mut l.media.pic);
+                    media(&mut l.media.gif);
+                    pic(&mut l.icon);
+                }
+                if t.action == "page" {
+                    for (k, v) in t.values.iter_mut() {
+                        if k == "page" {
+                            *v = by_name(v);
+                        }
+                    }
+                }
+                // the steps after the first (the window shows only the first)
+                let rest: Vec<(String, String)> = b
+                    .get("steps")
+                    .and_then(|s| s.as_array())
+                    .into_iter()
+                    .flatten()
+                    .skip(1)
+                    .map(|st| {
+                        let mut f = st.get("f").cloned().unwrap_or_else(|| json!({}));
+                        if str_of(st, "type") == "page" {
+                            let p = by_name(str_of(&f, "page"));
+                            f["page"] = json!(p);
+                        }
+                        (str_of(st, "type").to_string(), f.to_string())
+                    })
+                    .collect();
+                (t, rest)
+            })
+            .collect();
+        tiles.sort_by_key(|(t, _)| (t.row, t.col));
+        for (t, rest) in &tiles {
+            t.hash(h);
+            rest.hash(h);
+        }
+    };
+    let mut h = DefaultHasher::new();
+    walk(tree, 0, &mut h, &mut page);
+    format!("{:016x}", h.finish())
+}
+
+/// The content hash of a profile file (as profile_io::import_from hands it over).
+pub fn bundle_hash(b: &Value) -> String {
+    let designs: HashMap<String, Value> = b.get("designs").and_then(|d| d.as_array()).map(|a| a.iter().map(|d| (str_of(d, "id").to_string(), d.clone())).collect()).unwrap_or_default();
+    let tree = b.get("profile").and_then(|p| p.get("tree")).and_then(|t| t.as_array()).cloned().unwrap_or_default();
+    content_hash(&tree, &|n| n.get("buttons").and_then(|b| b.as_array()).cloned().unwrap_or_default(), &designs)
+}
+
+impl Library {
+    fn profile_hash(&self, idx: usize) -> String {
+        let boards = &self.doc["boards"];
+        let tree = self.doc["profiles"][idx].get("tree").and_then(|t| t.as_array()).cloned().unwrap_or_default();
+        content_hash(&tree, &|n| boards.get(str_of(n, "board")).and_then(|b| b.as_array()).cloned().unwrap_or_default(), &self.designs())
+    }
+
+    /// Marks the last profile added as plugin `plugin`'s ready-made one (from the file with `sha`).
+    pub fn link_last_profile(&mut self, plugin: &str, sha: &str) {
+        let Some(idx) = self.doc["profiles"].as_array().map(|a| a.len()).filter(|n| *n > 0).map(|n| n - 1) else { return };
+        let base = self.profile_hash(idx);
+        self.doc["profiles"][idx]["from"] = json!({ "plugin": plugin, "sha": sha, "base": base });
+        self.force = true;
+    }
+
+    /// The profiles that follow plugin `plugin`'s ready-made profile: the ones linked to it, and
+    /// (when `adopt`) ones imported before profiles were linked that need only this plugin
+    /// (named `plugin_name`). Their ids.
+    pub fn plugin_profiles(&self, plugin: &str, plugin_name: &str, adopt: bool) -> Vec<String> {
+        self.doc["profiles"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter(|p| match p.get("from") {
+                        Some(f) => str_of(f, "plugin") == plugin,
+                        None => {
+                            adopt
+                                && p.get("imported").and_then(|v| v.as_bool()).unwrap_or(false)
+                                && p.get("needs").and_then(|n| n.as_array()).is_some_and(|n| n.len() == 1 && n[0].as_str() == Some(plugin_name))
+                        }
+                    })
+                    .map(|p| str_of(p, "id").to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The SHA-256 of the plugin profile file profile `id` was last matched with ("" if none).
+    pub fn profile_sha(&self, id: &str) -> String {
+        self.profile_index(id).and_then(|i| self.doc["profiles"][i].get("from").map(|f| str_of(f, "sha").to_string())).unwrap_or_default()
+    }
+
+    /// Plugin `plugin`'s ready-made profile is now `bundle` (its file's `sha`). Each profile that
+    /// follows it is linked if it already matches, updated in place if the user hasn't changed it,
+    /// and reported as edited otherwise (nothing changes in it then).
+    #[allow(clippy::too_many_arguments)]
+    pub fn plugin_profile_changed(&mut self, s: &mut Sample, plugin: &str, plugin_name: &str, adopt: bool, bundle: &Value, sha: &str) -> Vec<PluginProfile> {
+        self.store_pages(s);
+        let new = bundle_hash(bundle);
+        let file_name = bundle.get("profile").map(|p| str_of(p, "name").to_string()).unwrap_or_default();
+        let mut out = vec![];
+        for id in self.plugin_profiles(plugin, plugin_name, adopt) {
+            let Some(idx) = self.profile_index(&id) else { continue };
+            let cur = self.profile_hash(idx);
+            let name = str_of(&self.doc["profiles"][idx], "name").to_string();
+            let base = self.doc["profiles"][idx].get("from").map(|f| str_of(f, "base").to_string());
+            // one added before profiles were linked counts only under the plugin profile's own
+            // name ("Spotify", or "Spotify 2" for a second copy): someone's own layout that uses
+            // the plugin is never taken for it
+            if base.is_none() && !same_profile_name(&name, &file_name) {
+                continue;
+            }
+            if cur == new {
+                self.doc["profiles"][idx]["from"] = json!({ "plugin": plugin, "sha": sha, "base": new });
+                self.force = true;
+                out.push(PluginProfile::Same);
+            } else if base.as_deref() == Some(cur.as_str()) {
+                match self.replace_profile(s, &id, bundle, plugin, sha) {
+                    Ok(n) => out.push(PluginProfile::Updated(n)),
+                    Err(_) => out.push(PluginProfile::Edited(id, name)),
+                }
+            } else {
+                out.push(PluginProfile::Edited(id, name));
+            }
+        }
+        out
+    }
+
+    /// Puts plugin profile `bundle` in place of profile `id`'s pages and buttons. The profile keeps
+    /// its id, name, colour, icon, switching rule and trust, and the page shown if it still has
+    /// one of that name. A copy of library.json is kept first. Returns the profile's name.
+    pub fn replace_profile(&mut self, s: &mut Sample, id: &str, bundle: &Value, plugin: &str, sha: &str) -> Result<String, String> {
+        self.store_pages(s);
+        let shown = s.pages.get(s.page).map(|p| p.name.clone()).unwrap_or_default();
+        let before = self.doc["profiles"].as_array().map_or(0, |a| a.len());
+        // added as a new profile first (new ids and its pictures, after a backup) ...
+        self.import_bundle(s, bundle)?;
+        let mut list = self.doc["profiles"].as_array().cloned().unwrap_or_default();
+        if list.len() != before + 1 {
+            return Err("The new profile couldn't be read.".into());
+        }
+        let temp = list.pop().expect("the new profile");
+        let idx = list.iter().position(|p| str_of(p, "id") == id).ok_or("That profile isn't in the library any more.")?;
+        // ... then its pages take the old ones' place, and the old boards go
+        let mut rows = vec![];
+        flatten(list[idx].get("tree").and_then(|t| t.as_array()).map(|t| t.as_slice()).unwrap_or(&[]), 0, &mut rows, &mut HashMap::new());
+        if let Some(b) = self.doc["boards"].as_object_mut() {
+            for r in rows.iter().filter(|r| !r.folder) {
+                b.remove(&r.board);
+            }
+        }
+        list[idx]["tree"] = temp["tree"].clone();
+        list[idx]["needs"] = temp["needs"].clone();
+        list[idx]["imported"] = json!(true);
+        let name = str_of(&list[idx], "name").to_string();
+        self.doc["profiles"] = Value::Array(list);
+        let base = self.profile_hash(idx);
+        self.doc["profiles"][idx]["from"] = json!({ "plugin": plugin, "sha": sha, "base": base });
+        s.profiles = self.profiles();
+        self.profiles_sig = hash_of(&s.profiles);
+        if self.loaded == id {
+            // the window shows this profile: its new pages, or the old ones would be saved back
+            self.load_pages(s, "");
+            if let Some(k) = s.pages.iter().position(|p| !p.folder && p.name == shown) {
+                s.page = k;
+                s.cols = s.pages[k].cols;
+                s.rows = s.pages[k].rows;
+                self.page_shown = k;
+            }
+        }
+        self.force = true;
+        Ok(name)
+    }
+
+    /// Keep mine: profile `id` stays as the user has it and isn't offered this version again.
+    pub fn keep_profile(&mut self, id: &str, plugin: &str, sha: &str) {
+        if let Some(idx) = self.profile_index(id) {
+            let base = self.doc["profiles"][idx].get("from").map(|f| str_of(f, "base").to_string()).unwrap_or_default();
+            self.doc["profiles"][idx]["from"] = json!({ "plugin": plugin, "sha": sha, "base": base });
+            self.force = true;
+        }
+    }
+
+    /// Setup's starter profile after it installed or updated plugin `plugin`: the profiles that
+    /// follow it are updated (see plugin_profile_changed); it is added only when none does.
+    /// Returns what happened, in words.
+    pub fn add_plugin_profile(path: &Path, plugin: &str, plugin_name: &str, sha: &str) -> Result<String, String> {
+        let (mut lib, mut s, _) = Library::open();
+        let bundle = super::profile_io::import_from(&lib.paths.media, path)?;
+        if lib.plugin_profiles(plugin, plugin_name, true).is_empty() {
+            let name = Library::add_profile_file_to(&mut lib, &mut s, &bundle)?;
+            lib.link_last_profile(plugin, sha);
+            lib.write()?;
+            return Ok(format!("{name} added"));
+        }
+        let done = lib.plugin_profile_changed(&mut s, plugin, plugin_name, true, &bundle, sha);
+        lib.write()?;
+        let said: Vec<String> = done
+            .iter()
+            .map(|d| match d {
+                PluginProfile::Same => "already up to date".to_string(),
+                PluginProfile::Updated(n) => format!("{n} updated"),
+                PluginProfile::Edited(_, n) => format!("{n} kept as you changed it (the app asks)"),
+            })
+            .collect();
+        Ok(said.join(", "))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1326,6 +1627,117 @@ mod profile_files {
         // the first profile is untouched, and a copy of the library was kept first
         assert_eq!(lib.doc["profiles"][0]["id"], "pr1");
         assert!(lib.force);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A plugin's profile file with these buttons on its one page.
+    fn plugin_bundle(labels: &[&str]) -> Value {
+        let buttons: Vec<Value> = labels
+            .iter()
+            .enumerate()
+            .map(|(i, l)| json!({ "id": format!("t{i}"), "label": l, "x": i, "y": 0, "w": 1, "h": 1, "steps": [{ "type": "plug:minnion_spotify:play", "f": {} }],
+                "states": [{ "name": "On" }, { "name": "Off" }], "cur": 0 }))
+            .collect();
+        json!({ "profile": { "name": "Spotify", "body": "mint", "icon": "note", "tree": [
+                    { "kind": "page", "id": "p1", "name": "Main", "cols": 5, "rows": 3, "buttons": buttons }] },
+                "designs": [], "drawnGifs": [], "gifFiles": [], "images": [], "plugins": ["Spotify"] })
+    }
+
+    /// The real Spotify profile from the marketplace (with its pictures and GIFs) looks the same
+    /// in the library as in its file, also after the window saved it, so it updates by itself.
+    ///     cargo test --release real_plugin_profile -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn real_plugin_profile_counts_as_untouched() {
+        let dir = std::env::temp_dir().join(format!("md-lib-real-{}", now_ms()));
+        let paths = Paths { root: dir.clone(), library: dir.join("library"), media: dir.join("library").join("media"), backups: dir.join("backups") };
+        paths.make_folders().unwrap();
+        let mut lib = Library { paths, doc: default_doc(), loaded: String::new(), page_shown: 0, buttons: HashMap::new(), nodes: HashMap::new(), profiles_sig: 0, saved: 0, seen: 0, changed_at: 0.0, force: false, backed_up: true, auto_backup: true };
+        let mut s = Sample::empty();
+        s.profiles = lib.profiles();
+        lib.load_pages(&mut s, "");
+        let d = super::super::market::download_plugin_profile(&dir, "minnion_spotify").unwrap();
+        let bundle = super::super::profile_io::import_from(&lib.paths.media, &d.path).unwrap();
+        println!("{} buttons on {} pages", bundle["profile"]["tree"].to_string().matches("\"label\"").count(), bundle["profile"]["tree"].as_array().map_or(0, |t| t.len()));
+        lib.import_bundle(&mut s, &bundle).unwrap();
+        lib.link_last_profile("minnion_spotify", &d.sha);
+        let base = lib.doc["profiles"][1]["from"]["base"].as_str().unwrap().to_string();
+        assert_eq!(base, bundle_hash(&bundle), "the library and the file look the same");
+        s.active = 1;
+        lib.load_pages(&mut s, "");
+        lib.store_pages(&mut s);
+        assert_eq!(lib.profile_hash(1), base, "still untouched after the window saved it");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_plugin_profile_follows_its_plugin() {
+        let dir = std::env::temp_dir().join(format!("md-lib-plug-{}", now_ms()));
+        let paths = Paths { root: dir.clone(), library: dir.join("library"), media: dir.join("library").join("media"), backups: dir.join("backups") };
+        paths.make_folders().unwrap();
+        let mut lib = Library { paths, doc: default_doc(), loaded: String::new(), page_shown: 0, buttons: HashMap::new(), nodes: HashMap::new(), profiles_sig: 0, saved: 0, seen: 0, changed_at: 0.0, force: false, backed_up: true, auto_backup: true };
+        let mut s = Sample::empty();
+        s.profiles = lib.profiles();
+        lib.load_pages(&mut s, "");
+
+        // added from the marketplace and linked
+        lib.import_bundle(&mut s, &plugin_bundle(&["Play"])).unwrap();
+        lib.link_last_profile("minnion_spotify", "sha1");
+        let id = lib.doc["profiles"][1]["id"].as_str().unwrap().to_string();
+        assert_eq!(lib.plugin_profiles("minnion_spotify", "Spotify", false), vec![id.clone()]);
+        let base = lib.doc["profiles"][1]["from"]["base"].as_str().unwrap().to_string();
+        assert_eq!(base, bundle_hash(&plugin_bundle(&["Play"])), "the library and the file look the same");
+
+        // shown in the window, saved back and a look pressed: still untouched
+        s.active = 1;
+        lib.load_pages(&mut s, "");
+        s.tiles[0].cur = 1;
+        lib.store_pages(&mut s);
+        assert_eq!(lib.profile_hash(1), base);
+
+        // the plugin's profile gets a button: the untouched profile is updated in place
+        s.profiles[1].name = "My Spotify".into();
+        lib.sync_profiles(&mut s);
+        let r = lib.plugin_profile_changed(&mut s, "minnion_spotify", "Spotify", false, &plugin_bundle(&["Play", "Next"]), "sha2");
+        assert!(matches!(r.as_slice(), [PluginProfile::Updated(n)] if n == "My Spotify"));
+        assert_eq!(lib.doc["profiles"].as_array().unwrap().len(), 2, "no copy was added");
+        assert_eq!(lib.doc["profiles"][1]["id"], json!(id));
+        assert_eq!(lib.doc["profiles"][1]["name"], "My Spotify");
+        assert_eq!(lib.profile_sha(&id), "sha2");
+        assert_eq!(s.tiles.len(), 2, "the window shows the new buttons");
+        assert_eq!(lib.doc["boards"].as_object().unwrap().len(), 2, "the old board went");
+
+        // the user changes a button: the next version isn't put in by itself
+        s.tiles[0].label = "Mine".into();
+        let r = lib.plugin_profile_changed(&mut s, "minnion_spotify", "Spotify", false, &plugin_bundle(&["Play", "Next", "Back"]), "sha3");
+        assert!(matches!(r.as_slice(), [PluginProfile::Edited(i, _)] if *i == id));
+        assert_eq!(s.tiles[0].label, "Mine");
+        lib.keep_profile(&id, "minnion_spotify", "sha3");
+        assert_eq!(lib.profile_sha(&id), "sha3");
+
+        // a profile added before profiles were linked is found and linked when it matches
+        lib.import_bundle(&mut s, &plugin_bundle(&["Play"])).unwrap();
+        let old = lib.doc["profiles"][2]["id"].as_str().unwrap().to_string();
+        assert!(lib.plugin_profiles("minnion_spotify", "Spotify", false).len() == 1);
+        assert!(lib.plugin_profiles("minnion_spotify", "Spotify", true).contains(&old));
+        let r = lib.plugin_profile_changed(&mut s, "minnion_spotify", "Spotify", true, &plugin_bundle(&["Play"]), "sha1");
+        assert!(matches!(r.as_slice(), [PluginProfile::Edited(..), PluginProfile::Same]));
+        assert_eq!(lib.profile_sha(&old), "sha1");
+
+        // someone's own layout that only uses the plugin is never taken for the plugin's profile
+        lib.import_bundle(&mut s, &plugin_bundle(&["Mine"])).unwrap();
+        lib.doc["profiles"][3]["name"] = json!("Friend's layout");
+        let r = lib.plugin_profile_changed(&mut s, "minnion_spotify", "Spotify", true, &plugin_bundle(&["Play", "Next"]), "sha4");
+        assert_eq!(r.len(), 2, "the linked one and the adopted one, not the friend's");
+        assert_eq!(lib.profile_sha(lib.doc["profiles"][3]["id"].as_str().unwrap()), "");
+        assert!(same_profile_name("Spotify 2", "Spotify") && same_profile_name("Spotify", "Spotify"));
+        assert!(!same_profile_name("Spotify mine", "Spotify") && !same_profile_name("Spotify", ""));
+
+        // exports and copies don't follow the plugin
+        let b = lib.bundle_for(&mut s, &id).unwrap();
+        assert!(b["profile"].get("from").is_none());
+        let src = lib.doc["profiles"][1].clone();
+        assert!(lib.copy_profile(&src).get("from").is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

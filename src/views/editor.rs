@@ -68,7 +68,9 @@ pub struct Editor {
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum MediaAsk {
     Import(crate::backend::media::Kind),
-    Website(&'static str),
+    /// Edit image: the editor (GIF maker and Images), on this look's picture or GIF (Some: that kind),
+    /// with Sync back here
+    WebEdit(Option<crate::backend::media::Kind>),
 }
 
 static EDITOR_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -301,7 +303,15 @@ pub fn draw(app: &mut App, ui: &mut Ui, win: Rect) {
                 ed.state_at = Some(now);
             }
         }
-        cv.para(20.0, ty + size + 80.0, left_w - 40.0, 18.0, 13.0, 400, th.slate, "This is how the button looks on the deck and on your phone.");
+        // Edit image: the website opens on this look's picture; Sync there brings it back
+        let mut eo = cv.opt_btn(14.0);
+        eo.bw = 3.0;
+        eo.shadow = 3.0;
+        let ew = cv.measure(14.0, 600, "Edit image") + 40.0;
+        if cv.button("webedit", (left_w - ew) / 2.0, ty + size + 72.0, ew, 36.0, "Edit image", eo) {
+            ed.want = Some(MediaAsk::WebEdit(None));
+        }
+        cv.para(20.0, ty + size + 126.0, left_w - 40.0, 18.0, 13.0, 400, th.slate, "This is how the button looks on the deck and on your phone. Edit image opens the editor in your browser: press Sync there to bring the picture back.");
     }
 
     // ---- right: the four steps ------------------------------------------------------------
@@ -379,18 +389,18 @@ pub fn draw(app: &mut App, ui: &mut Ui, win: Rect) {
             if saving {
                 save_tile(app, &ed, now);
             }
+            crate::backend::websync::stop(ed.token);
             return;
         }
     }
     if let Some(ask) = ed.want.take() {
         match ask {
             MediaAsk::Import(kind) => app.start_media_import(kind, ed.token, ed.sel),
-            MediaAsk::Website(page) => {
-                let url = crate::backend::media::site_page(page);
-                match crate::backend::actions::open_url(&url) {
-                    Ok(()) => app.say("Opened the Minniondeck website. Download what you make, then use Import here.", now),
-                    Err(e) => app.say(&e, now),
-                }
+            MediaAsk::WebEdit(kind) => {
+                let (token, look) = (ed.token, ed.sel);
+                app.editor = Some(ed);
+                app.start_web_edit(token, look, kind, now);
+                return;
             }
         }
     }
@@ -571,7 +581,7 @@ fn form(cv: &mut Cv, ed: &mut Editor, w: f32, now: f64, pages: &[(String, String
     y + 24.0
 }
 
-/// Your pictures (tab 4) or GIFs (tab 5) for the look being edited: Import…, Make on the website,
+/// Your pictures (tab 4) or GIFs (tab 5) for the look being edited: Import…, Make a GIF / Make a picture,
 /// None and each one as a cell, then how it shows. Returns its height.
 fn media_panel(cv: &mut Cv, ed: &mut Editor, x: f32, y0: f32, w: f32, now: f64) -> f32 {
     use crate::backend::media::{self, Kind};
@@ -582,20 +592,21 @@ fn media_panel(cv: &mut Cv, ed: &mut Editor, x: f32, y0: f32, w: f32, now: f64) 
     let multi = ed.looks.len() > 1;
     let whose = if multi { format!(" Only look {}, {}, gets it; each look can have its own.", ed.sel + 1, ed.looks[ed.sel].name) } else { String::new() };
     let help = if gifs {
-        format!("GIFs are drawn on the Minniondeck website (GIF maker). Press Download GIF there, then Import it here.{whose}")
+        format!("Draw one in the GIF maker: it opens in your browser, and Sync there puts it on this look. Or Import a GIF file.{whose}")
     } else {
-        format!("Pictures are made on the Minniondeck website (Images). Press Download PNG there, then Import it here. A picture fills the button behind its icon and name.{whose}")
+        format!("Make one in the Images editor: it opens in your browser, and Sync there puts it on this look. Or Import a picture. A picture fills the button behind its icon and name.{whose}")
     };
     y += cv.para(x, y, w, 18.0, 13.0, 400, th.slate, &help) + 10.0;
-    // Import… and Make on the website
+    // Import… and the editor
     let o = cv.opt_btn(14.0);
     let iw = cv.measure(14.0, 600, "Import…") + 28.0;
     if cv.button(if gifs { "gimport" } else { "pimport" }, x, y, iw, 38.0, "Import…", o) {
         ed.want = Some(MediaAsk::Import(if gifs { Kind::Gif } else { Kind::Picture }));
     }
-    let ww = cv.measure(14.0, 600, "Make on the website") + 28.0;
-    if cv.button(if gifs { "gsite" } else { "psite" }, x + iw + 10.0, y, ww, 38.0, "Make on the website", o) {
-        ed.want = Some(MediaAsk::Website(if gifs { "gifs" } else { "images" }));
+    let make = if gifs { "Make a GIF" } else { "Make a picture" };
+    let ww = cv.measure(14.0, 600, make) + 28.0;
+    if cv.button(if gifs { "gsite" } else { "psite" }, x + iw + 10.0, y, ww, 38.0, make, o) {
+        ed.want = Some(MediaAsk::WebEdit(Some(if gifs { Kind::Gif } else { Kind::Picture })));
     }
     y += 38.0 + 14.0;
     // the cells: None, then each picture or GIF

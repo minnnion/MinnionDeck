@@ -47,17 +47,18 @@ fn main() -> eframe::Result {
         let root = backend::paths::Paths::find().root;
         // --add-profile-file <file.mdprofile> adds a profile file from disk instead
         let r = if args.iter().any(|a| a == "--add-profile-file") {
-            backend::library::Library::add_profile_file(std::path::Path::new(id))
+            backend::library::Library::add_profile_file(std::path::Path::new(id)).map(|n| format!("{n} added"))
         } else {
-            backend::market::download_profile(&root, id).and_then(|path| {
-                let out = backend::library::Library::add_profile_file(&path);
-                let _ = std::fs::remove_file(&path);
+            // a profile that already follows this plugin is updated instead of added again
+            backend::market::download_plugin_profile(&root, id).and_then(|d| {
+                let out = backend::library::Library::add_plugin_profile(&d.path, id, &d.plugin_name, &d.sha);
+                let _ = std::fs::remove_file(&d.path);
                 out
             })
         };
         match r {
             Ok(name) => {
-                println!("{name} added");
+                println!("{name}");
                 std::process::exit(0);
             }
             Err(e) => {

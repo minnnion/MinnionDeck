@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <link rel="preload" href="./assets/ibm-plex-mono-latin-400-normal-DMJ8VG8y.woff2" as="font" type="font/woff2" crossorigin="">
+  <link rel="preload" href="./assets/pixelify-sans-latin-wght-normal-Cbhn5ptY.woff2" as="font" type="font/woff2" crossorigin="">
+
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1e2433">
+<meta name="robots" content="noindex">
+<title>Edit image · MinnionDeck</title>
+  <script type="module" crossorigin src="./assets/editor-BlXAJ1Pi.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/style-se2VoSqV.css">
+</head>
+<body class="ed-app">
+
+<header class="top">
+  <div class="wrap">
+    <span class="brand">MinnionDeck<span class="ver">Edit image</span></span>
+    <nav class="nav ed-nav" aria-label="Editor">
+      <a href="#images" data-view="images">Images</a>
+      <a href="#gifs" data-view="gifs">GIF maker</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap tight" id="gifs-view" hidden>
+  <div class="mkr-top">
+    <div class="head"><span class="label">MinnionDeck</span><h1>GIF maker</h1><p>Draw a pixel animation frame by frame. Sync puts it straight on the button you're editing in MinnionDeck.</p></div>
+  </div>
+  <div class="desk-bar frame" data-desk hidden role="status"></div>
+  <div id="gif-ed"></div>
+</main>
+
+<main class="wrap tight" id="images-view" hidden>
+  <div class="mkr-top">
+    <div class="head"><span class="label">MinnionDeck</span><h1>Images</h1><p>Draw on the button's picture, or design a face from layers. Sync puts it straight on the button you're editing in MinnionDeck.</p></div>
+  </div>
+  <div class="desk-bar frame" data-desk hidden role="status"></div>
+  <div class="tabs2" role="tablist" aria-label="Image tool">
+    <button type="button" role="tab" id="itab-design" aria-selected="true" aria-controls="img-design" data-itab="design">Button designer</button>
+    <button type="button" role="tab" id="itab-pixel" aria-selected="false" aria-controls="img-pixel" data-itab="pixel">Pixel picture</button>
+  </div>
+  <div id="img-design" role="tabpanel" aria-labelledby="itab-design"></div>
+  <div id="img-pixel" role="tabpanel" aria-labelledby="itab-pixel" hidden></div>
+</main>
+
+</body>
+</html>

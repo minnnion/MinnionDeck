@@ -140,6 +140,10 @@ pub struct App {
     pub phones: crate::app_phones::PhoneGlue,
     /// A plugin file waiting for Install, and files or links the app was started with (app_open.rs).
     pub install_ask: Option<crate::app_open::InstallAsk>,
+    /// Plugin profiles that have a new version the user changed: each waits for an answer
+    /// (views/profile_update.rs). `profiles_checked`: the start-up check has run.
+    pub profile_offers: Vec<crate::views::profile_update::ProfileOffer>,
+    pub profiles_checked: bool,
     pub pending_open: Vec<String>,
 }
 
@@ -281,6 +285,8 @@ impl App {
             upd: crate::app_updates::UpdateGlue::new(),
             phones: crate::app_phones::PhoneGlue::start(&lib_root, &egui_ctx, shot_run),
             install_ask: None,
+            profile_offers: vec![],
+            profiles_checked: false,
             // what the app was started with: a double-clicked file, or a link
             pending_open: if shot_run { std::env::args().skip(1).filter(|a| !a.starts_with("--")).collect() } else { vec![] },
         };
@@ -296,6 +302,9 @@ impl App {
         }
         app.settings.prev_auto = app.auto_switch;
         app.init_autostart();
+        if shot_run {
+            app.init_web_link();
+        }
         if shot_run {
             let _ = crate::backend::market::load_cache(&app.lib.paths.root);
         }
@@ -823,6 +832,13 @@ impl eframe::App for App {
             crate::views::plugin_dialog::dialog(self, ui, win);
         }
         crate::views::install_dialog::dialog(self, ui, win);
+        crate::views::profile_update::dialog(self, ui, win);
+        // once, a few seconds after start: profiles whose plugin's profile changed (also the ones
+        // added before profiles were linked to their plugin)
+        if !self.profiles_checked && now > 3.0 {
+            self.profiles_checked = true;
+            self.check_plugin_profiles(true);
+        }
         // a pressed button runs; what failed says why; the library keeps up and saves
         if let Some(i) = self.pending_press.take() {
             self.press_tile(i, now);

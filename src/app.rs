@@ -493,14 +493,15 @@ impl App {
                 _ => self.say("There is no page to go back to", now),
             },
             _ => {
-                if self.lib.needs_trust() {
+                let steps = self.lib.steps_of(&t);
+                // only buttons that can act on the PC by themselves ask (plugin buttons don't)
+                if self.lib.needs_trust() && crate::backend::actions::risky(&steps) {
                     let name = self.sample.profiles.get(self.sample.active).map(|p| p.name.clone()).unwrap_or_default();
                     if !crate::backend::actions::allow_imported(&name) {
                         return;
                     }
                     self.lib.trust();
                 }
-                let steps = self.lib.steps_of(&t);
                 let button = self.plugin_ctx(&t);
                 let tx = self.ran_tx.clone();
                 let label = if t.label.is_empty() { "The button".to_string() } else { t.label.clone() };

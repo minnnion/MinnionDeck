@@ -792,7 +792,7 @@ fn extra(app: &mut App, cv: &mut Cv, e: Extra, x: f32, y: f32, w: f32, now: f64)
             crate::app::draw_minnion(cv, x + 16.0, yy + 16.0 + bob.round(), 80.0);
             let tx = x + 112.0 + 24.0;
             cv.text(tx, yy + 8.0, 34.0, 26.0, 700, th.ink, "Minniondeck");
-            cv.text(tx, yy + 46.0, 20.0, 14.0, 600, th.slate, "Version 0.1.0 · Windows");
+            cv.text(tx, yy + 46.0, 20.0, 14.0, 600, th.slate, &format!("Version {} · Windows", env!("CARGO_PKG_VERSION")));
             cv.para(tx, yy + 74.0, w - (tx - x), 20.0, 14.0, 400, th.ink, "Turn your PC, phone or tablet into a deck of buttons: shortcuts, apps, sound and more.");
             let mut bx = x;
             let by = yy + 140.0;

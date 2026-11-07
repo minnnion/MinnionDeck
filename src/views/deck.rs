@@ -574,7 +574,8 @@ pub fn draw(app: &mut App, cv: &mut Cv, w: f32, h: f32) -> f32 {
         let tw_ = t.w as f32 * cell + (t.w as f32 - 1.0) * gap;
         let th_ = t.h as f32 * cell + (t.h as f32 - 1.0) * gap;
         let resp = cv.hit(&format!("tile{i}"), hx, hy, tw_, th_);
-        if resp.drag_started() && app.drag.is_none() && app.editor.is_none() && app.menu.is_none() {
+        // buttons move only in Edit layout, so a press can't drag one by accident
+        if resp.drag_started() && app.edit_layout && app.drag.is_none() && app.editor.is_none() && app.menu.is_none() {
             let origin = ctx.input(|inp| inp.pointer.press_origin()).or(resp.interact_pointer_pos());
             if let Some(o) = origin {
                 let p = ctx.pointer_latest_pos().unwrap_or(o);
@@ -666,13 +667,6 @@ pub fn draw(app: &mut App, cv: &mut Cv, w: f32, h: f32) -> f32 {
         let face = Face { media: Some(t.media_now()), colour, icon, label, dashed: app.edit_layout, hover, down, xf, pop };
         let fw_ = tw_ * fx;
         tile_face(cv, x + (tw_ - fw_) / 2.0, y, fw_, th_, &face);
-        if t.looks() > 1 && fx > 0.5 {
-            // which look is showing: small dots in the top right
-            for d in 0..t.looks() {
-                let dx = x + tw_ - 12.0 - (t.looks() - 1 - d) as f32 * 10.0;
-                cv.fill(dx, y + 10.0, 6.0, 6.0, if d == t.cur { th.ink } else { with_alpha(th.ink, 0.3) });
-            }
-        }
         if app.selected_tile == Some(i) {
             cv.border(x - 2.0 - 6.0, y - 2.0 - 6.0, tw_ + 4.0 + 12.0, th_ + 4.0 + 12.0, 4.0, th.coral_dark);
         }

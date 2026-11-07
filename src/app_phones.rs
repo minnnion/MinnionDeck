@@ -224,7 +224,7 @@ impl App {
                 if (t.action == "page" || t.action == "back") && steps.len() <= 1 {
                     return;
                 }
-                if self.lib.needs_trust() {
+                if self.lib.needs_trust() && crate::backend::actions::risky(&steps) {
                     let name = self.sample.profiles.get(self.sample.active).map(|p| p.name.clone()).unwrap_or_default();
                     if !crate::backend::actions::allow_imported(&name) {
                         return tell(&hub, &device, Err("Buttons from an imported profile need to be allowed on the PC first.".into()));

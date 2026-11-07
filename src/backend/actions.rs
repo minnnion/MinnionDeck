@@ -270,6 +270,13 @@ pub fn open_path(path: &std::path::Path) -> Result<(), String> {
     win::open(&path.display().to_string(), "")
 }
 
+/// Whether any step can act on the PC by itself (press keys, type, open programs or websites,
+/// change sound...). Plugin steps only send an event to a plugin that was checked when it was
+/// installed, and page, back and wait steps only move around the deck, so those never ask.
+pub fn risky(steps: &[Step]) -> bool {
+    steps.iter().any(|s| !(s.kind.starts_with("plug:") || matches!(s.kind.as_str(), "page" | "back" | "delay" | "")))
+}
+
 /// Buttons from an imported profile can open programs and press keys. The first time one of
 /// them runs, ask in a Windows dialog. True when the user allows it.
 pub fn allow_imported(name: &str) -> bool {

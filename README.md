@@ -12,7 +12,7 @@ Big square buttons for apps, keys, sounds, timers, weather, music and more, on y
 ![Built with](https://img.shields.io/badge/built%20with-Rust%20%C2%B7%20egui-b79cff)
 ![Phones](https://img.shields.io/badge/phones-Android%20%C2%B7%20iPhone-ffc93c)
 
-**[Download](https://github.com/minnnion/MinnionDeck/releases/latest)** · **[Website](https://minnnion.github.io)** · **[Features](#features)** · **[How it works](#how-it-works)**
+**[Download](https://github.com/minnnion/MinnionDeck/releases/latest)** · **[Website](https://minnnion.github.io)** · **[Features](#features)** · **[How it works](#how-it-works)** · **[Privacy](PRIVACY.md)** · **[Terms](TERMS.md)**
 
 <img src="docs/screenshots/deck.png" alt="MinnionDeck showing the Weather profile" width="880">
 
@@ -149,6 +149,14 @@ No admin rights are needed. To remove it, use **Installed apps** in Windows. You
 - **[Pixelify Sans](https://fonts.google.com/specimen/Pixelify+Sans)**: the pixel font.
 
 The source is here to read. MinnionDeck is meant to be installed with the official setup from [Releases](https://github.com/minnnion/MinnionDeck/releases), which brings the app, its Windows entries, your chosen plugins and their profiles.
+
+## Privacy and terms
+
+- No account, no ads, and no usage data sent to us; your data stays encrypted on your PC.
+- The app only contacts GitHub (updates, Marketplace); phones and the editor stay on your own network and PC.
+- Free to use from age 13; the source is to read, not to copy or redistribute.
+
+Short versions: [PRIVACY.md](PRIVACY.md) · [TERMS.md](TERMS.md). Full pages: [Privacy Policy](https://minnnion.github.io/privacy) · [Terms of Service](https://minnnion.github.io/terms). Contact: [minniondeck@gmail.com](mailto:minniondeck@gmail.com)
 
 <div align="center">
 <br>

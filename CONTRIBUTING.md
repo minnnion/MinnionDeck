@@ -37,11 +37,8 @@ Made a deck others would like (a game, a stream setup, an app)? Export it as a `
 A star on this repository, a review, or a short video of your deck helps more people find
 MinnionDeck.
 
-## Building from the source (to read and test)
+## Installing
 
-You need Windows 10 or 11 and [Rust](https://rustup.rs/) (stable).
-
-    cargo run --release      # run the app from the source
-    cargo test               # the tests
-
-The app keeps its data in `build\` beside the source when run this way.
+MinnionDeck is installed with the setup from
+[Releases](https://github.com/minnnion/MinnionDeck/releases/latest). The source here is to read,
+not to build your own copy from.

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and shared profiles
+    url: https://github.com/minnnion/MinnionDeck/discussions
+    about: Ask how to do something, show your deck, or share a .mdprofile.
+  - name: Report a bug with your log file
+    url: https://minnnion.github.io/#contribute
+    about: The website's form can attach your log file.
+  - name: Submit a plugin
+    url: https://minnnion.github.io/#marketplace
+    about: Send your plugin to the Marketplace.

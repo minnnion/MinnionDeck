@@ -1,0 +1,15 @@
+name: Feature idea
+description: Something MinnionDeck could do
+labels: [idea]
+body:
+  - type: textarea
+    id: use
+    attributes:
+      label: What would you use it for?
+      description: The job you want a button (or the app) to do, and how you do it now.
+    validations:
+      required: true
+  - type: textarea
+    id: how
+    attributes:
+      label: How you picture it (optional)

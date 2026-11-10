@@ -1,0 +1,53 @@
+name: Bug report
+description: Something in MinnionDeck doesn't work as it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for telling us! For a security problem, please follow [SECURITY.md](https://github.com/minnnion/MinnionDeck/blob/main/SECURITY.md) instead.
+  - type: input
+    id: version
+    attributes:
+      label: MinnionDeck version
+      description: Settings › Updates shows it.
+      placeholder: "0.1.2"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where
+      options:
+        - The deck (buttons, pages, profiles)
+        - Editing a button
+        - Phones
+        - Plugins or the Marketplace
+        - Settings, tray, updates or backups
+        - The setup (installing or removing)
+        - Something else
+    validations:
+      required: true
+  - type: input
+    id: plugin
+    attributes:
+      label: Plugin (if it's about one)
+      placeholder: "Spotify 0.4.1"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead. Screenshots help.
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 24H2"
+  - type: textarea
+    id: log
+    attributes:
+      label: Log (optional)
+      description: The end of logs\plugins.log in your MinnionDeck folder, if it says something about the problem.
+      render: text

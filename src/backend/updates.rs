@@ -420,4 +420,18 @@ mod tests {
             Err(e) => println!("no release to read: {e}"),
         }
     }
+
+    /// The latest real release must carry a signature the app accepts for its installer.
+    ///     cargo test --release real_release_is_signed -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn real_release_is_signed() {
+        let src = Source::default_source();
+        let r = fetch_latest(&src).expect("the latest release");
+        let a = installer(&r, &src).expect("an installer in the release");
+        let sha = digest(a).expect("GitHub's checksum for it");
+        let sig = fetch_signature(&r, &src, &a.name).expect("its .sig beside it");
+        let author = crate::backend::signing::verify_release(&sig, &a.name, &sha).expect("a signature the app accepts");
+        println!("{} {} is signed by {author}", r.tag_name, a.name);
+    }
 }

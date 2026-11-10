@@ -18,6 +18,8 @@ const TABS: [(&str, &str, &str); 8] = [
     ("About", "star", "Minniondeck, its version and where it comes from."),
 ];
 
+// The kinds of control a settings row can have; Text and None are drawn but no row uses them yet
+#[allow(dead_code)]
 enum Ctl {
     Switch(&'static str, bool),
     Seg(&'static str, &'static [&'static str], usize),
@@ -97,6 +99,7 @@ fn sections(tab: usize, _app: &App) -> Vec<Section> {
                 r("Connect over", "Phones connect over Wi-Fi. USB and Both are coming soon.", Seg("conn", &["Wi-Fi", "USB", "Both"], 0)),
                 r("Port", "Change this only if another app uses it.", Select("port", "8765")),
                 r("Show a matching number when a new phone pairs", "Check the same number shows on both before you accept.", Switch("match", true)),
+                r("Secure phone link", "The QR code opens the HTTPS page, so nobody else on the Wi-Fi can read what phones send. The phone warns about the certificate once.", Switch("secure", false)),
             ]),
             sec("On the phone", vec![
                 r("Phones follow the page open on this PC", "", Switch("follow", true)),

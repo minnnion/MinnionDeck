@@ -1,4 +1,16 @@
 target/
+# The built app and everything it saves next to it (your library, settings, phones, plugins)
 build/
+plugin-run/
+# Keys and sealed data: never committed, wherever they end up
 data.key
 *.mdkey
+*.mdsave
+*.mdmedia
+*.mdbackup
+*.mdplugin
+# Logs and per-machine tool state
+*.log
+.claude/
+.vscode/
+graphify-out/

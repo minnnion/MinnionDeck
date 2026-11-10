@@ -188,6 +188,52 @@ pub fn verify_folder(folder: &Path, user_trusted: &[AuthorKey]) -> Trust {
     }
 }
 
+/// The signature file that goes up beside a release's installer: `<installer name>.sig`
+pub fn release_sig_name(installer: &str) -> String {
+    format!("{installer}.sig")
+}
+
+/// Sign an app installer for a release with this PC's author key (the same signature.json
+/// format as plugins, listing the one file). Writes `<installer>.sig` beside it.
+pub fn sign_release(root: &Path, installer: &Path) -> Result<(AuthorKey, PathBuf), String> {
+    let name = installer.file_name().and_then(|n| n.to_str()).ok_or("Name the installer file.")?.to_string();
+    let bytes = fs::read(installer).map_err(|e| format!("Could not read {}: {e}", installer.display()))?;
+    let (me, body) = sign(root, &[(name.clone(), bytes)])?.ok_or_else(|| format!("There is no author key in {}.", author_dir(root).display()))?;
+    let out = installer.with_file_name(release_sig_name(&name));
+    fs::write(&out, body).map_err(|e| format!("Could not write {}: {e}", out.display()))?;
+    Ok((me, out))
+}
+
+/// Check a release installer's signature: it must be signed by one of `trusted` (public keys)
+/// and list exactly this installer with this SHA-256. Returns the author's name.
+pub fn verify_release_with(sig: &[u8], installer: &str, sha256_hex: &str, trusted: &[&str]) -> Result<String, String> {
+    let bad = || "The update's signature doesn't match, so it wasn't kept.".to_string();
+    let s: SigFile = serde_json::from_slice(sig).map_err(|_| "The update's signature can't be read, so it wasn't kept.".to_string())?;
+    if !trusted.contains(&s.key.as_str()) {
+        return Err("The update isn't signed by MinnionDeck, so it wasn't kept.".into());
+    }
+    let key = B64.decode(&s.key).map_err(|_| bad())?;
+    let signature = B64.decode(&s.sig).map_err(|_| bad())?;
+    UnparsedPublicKey::new(&ED25519, &key).verify(&message(&s.author, &s.key, &s.files), &signature).map_err(|_| bad())?;
+    if s.files.len() != 1 || s.files.get(installer).is_none_or(|h| !h.eq_ignore_ascii_case(sha256_hex)) {
+        return Err(bad());
+    }
+    Ok(s.author.chars().take(40).collect())
+}
+
+/// `verify_release_with` the built-in authors' keys: only they sign MinnionDeck's own updates.
+pub fn verify_release(sig: &[u8], installer: &str, sha256_hex: &str) -> Result<String, String> {
+    let keys: Vec<&str> = BUILT_IN.iter().map(|(_, k)| *k).collect();
+    verify_release_with(sig, installer, sha256_hex, &keys)
+}
+
+/// Where this PC's author key is: the app's own folder, or the Minniondeck app data folder the
+/// plugin tools have always used.
+pub fn author_root(app_root: &Path) -> PathBuf {
+    let appdata = std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("com.minnion.deck"));
+    [Some(app_root.to_path_buf()), appdata].into_iter().flatten().find(|r| author(r).is_some()).unwrap_or_else(|| app_root.to_path_buf())
+}
+
 /// Read a .mdkey file someone sent
 pub fn read_key_file(path: &Path) -> Result<AuthorKey, String> {
     let text = fs::read_to_string(path).map_err(|e| format!("Could not open {}: {e}", path.display()))?;
@@ -284,6 +330,31 @@ mod tests {
         fs::write(plugin.join("extra.dll"), b"x").unwrap();
         assert!(matches!(verify_folder(&plugin, &[me]), Trust::Bad { .. }));
         assert_eq!(fingerprint("abc").len(), 19);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_release_installer_is_signed_and_only_its_own_signature_passes() {
+        let root = std::env::temp_dir().join(format!("md-release-sign-{}", crate::backend::util::now_ms()));
+        fs::create_dir_all(&root).unwrap();
+        let exe = root.join("MinnionDeck-0.2.0-x64-setup.exe");
+        fs::write(&exe, b"installer bytes").unwrap();
+        assert!(sign_release(&root, &exe).unwrap_err().contains("no author key"));
+        let me = read_key_file(&make_key(&root, "Test Author", &root).unwrap()).unwrap();
+        let (_, sig_file) = sign_release(&root, &exe).unwrap();
+        assert_eq!(sig_file, root.join("MinnionDeck-0.2.0-x64-setup.exe.sig"));
+        let sig = fs::read(&sig_file).unwrap();
+        let sha = crate::backend::util::sha256_hex(b"installer bytes");
+        let name = "MinnionDeck-0.2.0-x64-setup.exe";
+        assert_eq!(verify_release_with(&sig, name, &sha, &[me.key.as_str()]).unwrap(), "Test Author");
+        // not a built-in author: MinnionDeck's own updates refuse it
+        assert!(verify_release(&sig, name, &sha).unwrap_err().contains("isn't signed by MinnionDeck"));
+        // another file, other bytes, or a changed signature are refused
+        assert!(verify_release_with(&sig, "Other-setup.exe", &sha, &[me.key.as_str()]).is_err());
+        assert!(verify_release_with(&sig, name, &crate::backend::util::sha256_hex(b"evil"), &[me.key.as_str()]).is_err());
+        let tampered = String::from_utf8(sig.clone()).unwrap().replace("Test Author", "Someone Else");
+        assert!(verify_release_with(tampered.as_bytes(), name, &sha, &[me.key.as_str()]).is_err());
+        assert!(verify_release_with(b"not json", name, &sha, &[me.key.as_str()]).is_err());
         let _ = fs::remove_dir_all(&root);
     }
 }

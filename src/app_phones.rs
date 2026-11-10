@@ -137,6 +137,7 @@ impl App {
     pub fn pump_phones(&mut self, now: f64) {
         let Some(hub) = self.phones.hub.clone() else { return };
         hub.require_match.store(self.st.get("match").map(|v| *v == 1).unwrap_or(true), std::sync::atomic::Ordering::Relaxed);
+        hub.secure_link.store(self.st.get("secure").is_some_and(|v| *v == 1), std::sync::atomic::Ordering::Relaxed);
         let mut events = vec![];
         if let Some(rx) = &self.phones.rx {
             while let Ok(e) = rx.try_recv() {

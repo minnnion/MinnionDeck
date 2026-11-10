@@ -79,12 +79,12 @@ pub struct App {
     pub settings_at: f64,
     pub settings_query: String,
     pub settings_saved: Option<(&'static str, f64)>,
-    pub settings_check: f64,
     pub settings_text: std::collections::HashMap<&'static str, String>,
     pub edit_layout: bool,
     pub selected_tile: Option<usize>,
+    /// How far each chat button (by its id) is scrolled back from its newest message
+    pub chat_scroll: std::collections::HashMap<String, f32>,
     pub prof_menu: bool,
-    pub choice: [usize; 8],
     pub st: std::collections::HashMap<&'static str, usize>,
     pub market_cat: usize,
     pub market_query: String,
@@ -109,7 +109,6 @@ pub struct App {
     pub shot_sent: bool,
     pub frames: u32,
     pub pending_view: Option<View>,
-    pub wb_hover: [bool; 3],
     /// The library behind the window (library.json), the pages visited (for Back), a button
     /// pressed this frame, and what the buttons that ran said (from their threads).
     pub lib: Library,
@@ -121,6 +120,8 @@ pub struct App {
     pub plug: crate::app_plugins::PluginGlue,
     /// A plugin's window, open from Settings › Plugins.
     pub plug_dialog: Option<crate::views::plugin_dialog::PlugDialog>,
+    /// A profile with choices waiting for its pages to be picked
+    pub choose_pages: Option<crate::views::choose_pages::ChoosePages>,
     /// Watches which app is in front, for switching profiles by itself (app_switch.rs).
     pub front: crate::app_switch::FrontWatch,
     /// Profile import and export (app_io.rs) and a handle to wake the window from threads.
@@ -241,12 +242,11 @@ impl App {
             settings_at: -10.0,
             settings_query: String::new(),
             settings_saved: None,
-            settings_check: -1000.0,
             settings_text: std::collections::HashMap::new(),
             edit_layout: false,
             selected_tile: None,
+            chat_scroll: std::collections::HashMap::new(),
             prof_menu: false,
-            choice: [0; 8],
             st: std::collections::HashMap::new(),
             market_cat: 0,
             market_query: String::new(),
@@ -266,7 +266,6 @@ impl App {
             shot_sent: false,
             frames: 0,
             pending_view: None,
-            wb_hover: [false; 3],
             lib,
             history: vec![],
             pending_press: None,
@@ -274,6 +273,7 @@ impl App {
             ran_rx,
             plug,
             plug_dialog: None,
+            choose_pages: None,
             front: crate::app_switch::FrontWatch::start(&egui_ctx, shot_run),
             io: crate::app_io::Io::new(),
             egui: egui_ctx.clone(),
@@ -399,6 +399,26 @@ impl App {
         if let Some(i) = args.iter().position(|a| a == "--market-detail") {
             if let Some(k) = args.get(i + 1).and_then(|id| crate::backend::market::plugins().iter().position(|p| p.id == id)) {
                 app.market_detail = Some(crate::views::marketplace::Detail { index: k, opened: Some(-10.0), closing: None, scroll: 0.0 });
+            }
+        }
+        // --choose-sample: the window that asks which pages of a profile to add (screenshots)
+        if args.iter().any(|a| a == "--choose-sample") {
+            let b = serde_json::json!({ "profile": { "name": "Streaming", "choose": "What do you stream with?", "choices": [{ "id": "obs", "label": "OBS Studio" }, { "id": "twitch", "label": "Twitch" }], "tree": [] } });
+            let mut c = crate::views::choose_pages::ChoosePages::new(b, None);
+            c.ticks[1] = false;
+            app.choose_pages = Some(c);
+        }
+        // --chat-sample: the first button of the page shows a sample chat (screenshots)
+        if args.iter().any(|a| a == "--chat-sample") {
+            let page = app.sample.page;
+            // made 2 x 3 at the top left, the others moved out of its way (only for the picture)
+            for t in app.sample.tiles.iter_mut().filter(|t| t.page == page) {
+                if t.col < 2 { t.col += 2; }
+            }
+            if let Some(t) = app.sample.tiles.iter_mut().find(|t| t.page == page) {
+                (t.col, t.row, t.w, t.h) = (0, 0, 2, 3);
+                let id = t.id.clone();
+                t.live.data = Some(app.plug.sample_chat(&id));
             }
         }
         if args.iter().any(|a| a == "--grid-menu") {
@@ -832,6 +852,7 @@ impl eframe::App for App {
             crate::views::plugin_dialog::dialog(self, ui, win);
         }
         crate::views::install_dialog::dialog(self, ui, win);
+        crate::views::choose_pages::dialog(self, ui, win);
         crate::views::profile_update::dialog(self, ui, win);
         // once, a few seconds after start: profiles whose plugin's profile changed (also the ones
         // added before profiles were linked to their plugin)
@@ -873,7 +894,8 @@ impl eframe::App for App {
             let t = ctx.input(|i| i.time);
             if let Some(id) = &plugin_window {
                 if self.plug_dialog.is_none() && t > 2.0 {
-                    self.plug_dialog = Some(crate::views::plugin_dialog::PlugDialog::new(id));
+                    let by = std::env::args().skip_while(|a| a != "--plugin-scroll").nth(1).and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
+                    self.plug_dialog = Some(crate::views::plugin_dialog::PlugDialog::new(id).scrolled(by));
                 }
             }
             let at = std::env::args().skip_while(|a| a != "--shot-at").nth(1).and_then(|v| v.parse::<f64>().ok());

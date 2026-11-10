@@ -27,6 +27,8 @@ pub struct PlugDialog {
     armed_at: Option<f64>,
     /// How tall the last frame drew it
     height: f32,
+    /// How far its body is scrolled down (when it is taller than the window)
+    scroll: f32,
     /// The message last shown, and when it changed (it slides in)
     msg_seen: String,
     msg_at: f64,
@@ -36,7 +38,7 @@ pub struct PlugDialog {
 
 impl PlugDialog {
     pub fn new(id: &str) -> PlugDialog {
-        let mut d = PlugDialog { id: id.to_string(), fields: vec![], values: HashMap::new(), saved_secret: HashMap::new(), opened: None, closing: None, msg: Arc::new(Mutex::new(String::new())), remove_armed: false, armed_at: None, height: 420.0, msg_seen: String::new(), msg_at: 0.0, initial: HashMap::new() };
+        let mut d = PlugDialog { id: id.to_string(), fields: vec![], values: HashMap::new(), saved_secret: HashMap::new(), opened: None, closing: None, msg: Arc::new(Mutex::new(String::new())), remove_armed: false, armed_at: None, height: 420.0, scroll: 0.0, msg_seen: String::new(), msg_at: 0.0, initial: HashMap::new() };
         if let Ok(v) = plugins::settings_view(id) {
             d.fields = v.get("fields").and_then(|f| f.as_array()).cloned().unwrap_or_default();
             if let Some(vals) = v.get("values").and_then(|v| v.as_object()) {
@@ -69,6 +71,12 @@ impl PlugDialog {
         }
         d.initial = d.values.clone();
         d
+    }
+
+    /// Screenshots: start scrolled this far down.
+    pub fn scrolled(mut self, by: f32) -> Self {
+        self.scroll = by;
+        self
     }
 
     fn say(&self, text: &str) {
@@ -175,6 +183,27 @@ pub fn dialog(app: &mut App, ui: &mut Ui, win: Rect) {
     }
     if r.clicked() {
         close = true;
+    }
+
+    // the body scrolls under the title bar when it is taller than the window
+    let body = Rect::from_min_max(pos2(dx + 4.0, dy + 50.0), pos2(dx + dw - 4.0, dy + dh - 4.0)).intersect(win);
+    let max_scroll = (pd.height - dh).max(0.0);
+    if ctx.input(|i| i.pointer.hover_pos()).is_some_and(|p| body.contains(p)) {
+        let wheel = ctx.input(|i| i.smooth_scroll_delta.y);
+        if wheel != 0.0 {
+            pd.scroll = (pd.scroll.min(max_scroll) - wheel).clamp(0.0, max_scroll);
+        }
+    }
+    // (kept as asked while the window is still growing, used as far as it can go)
+    let scroll = pd.scroll.clamp(0.0, max_scroll);
+    drop(cv);
+    let mut cv = Cv::new(ui, body, (dialog.min - vec2(0.0, scroll)).to_vec2(), th, "plugdlg");
+    if max_scroll > 0.0 {
+        // where it is: a bar on the right
+        let view = dh - 54.0;
+        let bh = (view * view / (pd.height - 54.0).max(view)).max(24.0);
+        let by = 50.0 + scroll + (view - bh) * (scroll / max_scroll).min(1.0);
+        cv.fill(dw - 12.0, by, 5.0, bh, with_alpha(th.ink, 0.35));
     }
 
     let (x, w) = (24.0, dw - 48.0);

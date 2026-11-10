@@ -1,3 +1,4 @@
+pub mod choose_pages;
 pub mod deck;
 pub mod editor;
 pub mod install_dialog;

@@ -67,6 +67,8 @@ pub struct Live {
     pub title: Option<String>,
     /// "png:live/<plugin>/<file>", registered in ui::images
     pub icon: Option<String>,
+    /// What the plugin sends for the button to draw itself (set_data), merged: a chat
+    pub data: Option<std::sync::Arc<serde_json::Value>>,
 }
 
 impl std::hash::Hash for Live {

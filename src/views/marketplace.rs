@@ -50,8 +50,11 @@ fn cat_name(c: &str) -> &'static str {
     CATS.iter().find(|k| k.0 == c).map(|k| k.1).unwrap_or("General")
 }
 
-fn plugin_icon(id: &str) -> &'static str {
-    crate::backend::catalog::plugins().iter().find(|p| p.id == id).map(|p| p.icon).unwrap_or("bolt")
+fn plugin_icon(id: &str) -> String {
+    match crate::backend::catalog::plugins().iter().find(|p| p.id == id).map(|p| p.icon) {
+        Some(i) if i != "bolt" => i.to_string(),
+        other => crate::backend::market::card_icon(id).unwrap_or_else(|| other.unwrap_or("bolt").to_string()),
+    }
 }
 
 /// The version of plugin `id` on this PC, if it is installed.
@@ -237,7 +240,7 @@ fn icon_box(cv: &mut Cv, p: &MarketPlugin, x: f32, y: f32, s: f32) {
     let th = cv.th;
     cv.boxed(x, y, s, s, 3.0, th.ink, th.accent(p.colour));
     let inner = ((s - 16.0) / 16.0).floor().max(1.0) * 16.0;
-    cv.icon(plugin_icon(p.id), x + (s - inner) / 2.0, y + (s - inner) / 2.0, inner, th.on_accent);
+    cv.icon(&plugin_icon(p.id), x + (s - inner) / 2.0, y + (s - inner) / 2.0, inner, th.on_accent);
 }
 
 /// "Official" with a check, after the author.

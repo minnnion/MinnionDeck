@@ -147,6 +147,8 @@ pub struct Hub {
     repaint: Box<dyn Fn() + Send + Sync>,
     /// Ask the PC to Allow a new phone (otherwise the code is enough)
     pub require_match: AtomicBool,
+    /// The QR opens the HTTPS page (Settings › Phones › Secure phone link)
+    pub secure_link: AtomicBool,
     next_id: AtomicU64,
 }
 
@@ -236,6 +238,7 @@ pub fn start(root: &Path, want_port: u16, events: Sender<PhoneEvent>, repaint: i
         events: Mutex::new(events),
         repaint: Box::new(repaint),
         require_match: AtomicBool::new(true),
+        secure_link: AtomicBool::new(false),
         next_id: AtomicU64::new(1),
     });
     server::serve(hub.clone(), listener, secure.map(|(l, _, tls)| (l, tls)));
@@ -270,7 +273,16 @@ impl Hub {
 
     /// What the QR holds: the page and the code, after a # so it never goes in a log.
     pub fn url(&self) -> String {
-        format!("{}#{}", self.base_url(), self.code())
+        format!("{}#{}", self.page_url(), self.code())
+    }
+
+    /// The page the QR and the Phones page point to: HTTPS when Secure phone link is on (and
+    /// there is a certificate), else the plain page.
+    pub fn page_url(&self) -> String {
+        match self.secure_url() {
+            Some(s) if self.secure_link.load(Ordering::Relaxed) => s,
+            _ => self.base_url(),
+        }
     }
 
     /// The page a phone opens: plain http, so a phone shows no certificate warning.
@@ -465,8 +477,6 @@ impl Hub {
         if !self.require_match.load(Ordering::Relaxed) {
             drop(st);
             // the code is enough
-            let number = String::new();
-            let _ = number;
             let mut st = lock(&self.st);
             let (tok, id) = (token(), format!("ph{}-{}", now_ms(), self.next_id.fetch_add(1, Ordering::Relaxed)));
             st.devices.push(Device { id: id.clone(), name: name.clone(), model, tablet, token_hash: sha256_hex(tok.as_bytes()), added_ms: now_ms(), last_seen_ms: now_ms() });

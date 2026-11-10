@@ -173,14 +173,18 @@ pub fn draw(app: &mut App, cv: &mut Cv, w: f32, h: f32) -> f32 {
             let cy = py + 164.0 + 8.0;
             let code = h.code();
             cv.text(x + 18.0, cy, 21.0, 14.0, 400, th.slate, "No camera? Open");
-            let aw = cv.measure(14.0, 600, &h.base_url());
-            cv.text_fit(x + 18.0 + 112.0, cy, 21.0, 14.0, 600, th.ink, &h.base_url(), left_w - 36.0 - 112.0);
-            let _ = aw;
+            let page = h.page_url();
+            cv.text_fit(x + 18.0 + 112.0, cy, 21.0, 14.0, 600, th.ink, &page, left_w - 36.0 - 112.0);
             cv.text(x + 18.0, cy + 22.0, 22.0, 14.0, 400, th.slate, "and type the code");
             cv.text(x + 18.0 + 140.0, cy + 18.0, 26.0, 20.0, 700, th.ink, &format!("{} {}", &code[..3], &code[3..]));
-            // the same page over https, for a Wi-Fi you don't trust (the phone warns once)
+            // the other way in: https for a Wi-Fi you don't trust, or plain when Secure phone link is on
             if let Some(s) = h.secure_url() {
-                cv.text_fit(x + 18.0, cy + 44.0, 19.0, 12.0, 400, th.slate, &format!("On a Wi-Fi you don't trust, use {s} (the phone warns once)"), left_w - 36.0);
+                let note = if page == s {
+                    "Secure phone link is on: the phone warns about the certificate once. Settings › Phones turns it off.".to_string()
+                } else {
+                    format!("On a Wi-Fi you don't trust, use {s} (the phone warns once), or turn on Secure phone link in Settings")
+                };
+                cv.text_fit(x + 18.0, cy + 44.0, 19.0, 12.0, 400, th.slate, &note, left_w - 36.0);
             }
             let wy = cy + 44.0 + if h.tls_port != 0 { 26.0 } else { 0.0 };
             cv.fill(x + 18.0, wy - 6.0, left_w - 36.0, 2.0, th.rule);
@@ -209,7 +213,7 @@ pub fn draw(app: &mut App, cv: &mut Cv, w: f32, h: f32) -> f32 {
     if cv.button("copyurl", x + 18.0, uy + 54.0, w1, 40.0, "Copy the address", o) {
         match &hub {
             Some(h) => {
-                cv.ui.ctx().copy_text(h.base_url());
+                cv.ui.ctx().copy_text(h.page_url());
                 app.say("Address copied", now);
             }
             None => app.say("The phone page isn't running", now),

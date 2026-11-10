@@ -5,8 +5,9 @@
 //
 // Two keys:
 // - Your own data (saves, pictures, backups: version 2) is sealed with a key made for this install
-//   the first time it runs, kept in data.key beside the app. It is never in the source or the exe,
-//   so nobody else's copy of Minniondeck can open your files.
+//   the first time it runs, kept in data.key beside the app, locked to the Windows account (DPAPI).
+//   It is never in the source or the exe, so nobody else's copy of Minniondeck, another Windows
+//   account, or a copy of the folder on another PC can open your files.
 // - Files made to be shared (.mdprofile: version 1) must open on every PC, so they use one key
 //   that ships with the app and is public. That only keeps them from being edited by hand.
 //   Version-1 saves from older builds are read with it and sealed again with this install's key.
@@ -98,10 +99,35 @@ pub fn init_data_key(root: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
+/// data.key holds this install's key locked to the Windows account (DPAPI), so another account, or
+/// the folder copied to another PC, can't open the saved data. Moving to another PC is done with
+/// Export (.mdprofile files use the shared key and open anywhere).
+/// A data.key from an earlier version holds the raw 32 bytes: it is locked in place the first time
+/// it is read, once the locked copy has been checked to unlock to the same key.
 fn load_or_make_key(root: &std::path::Path) -> Result<[u8; 32], String> {
+    use crate::backend::signing::{protect, unprotect};
     let file = root.join(DATA_KEY_FILE);
     Ok(match std::fs::read(&file) {
-        Ok(bytes) => <[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| format!("{} is damaged, so your saved data can't be opened. Put back the data.key from a copy of this folder.", file.display()))?,
+        // an earlier version's unlocked key
+        Ok(bytes) if bytes.len() == 32 => {
+            let k = <[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| "Couldn't read this install's data key.".to_string())?;
+            if let Ok(locked) = protect(&k) {
+                // only replaced once the locked copy unlocks to the same key; otherwise left as it was
+                if locked != bytes && unprotect(&locked).is_ok_and(|back| back == k) {
+                    let _ = crate::backend::util::write_atomic(&file, &locked);
+                }
+            }
+            k
+        }
+        Ok(bytes) => {
+            let k = unprotect(&bytes).map_err(|_| {
+                format!(
+                    "{} belongs to another Windows account or PC, or is damaged, so your saved data can't be opened here. Open Minniondeck from the Windows account that made it; to move to this PC, export your profiles there and import them here.",
+                    file.display()
+                )
+            })?;
+            <[u8; 32]>::try_from(k.as_slice()).map_err(|_| format!("{} is damaged, so your saved data can't be opened.", file.display()))?
+        }
         Err(_) => {
             if let Some(f) = find_local_sealed(root) {
                 return Err(format!("{} is missing, so your saved data (like {}) can't be opened. Put back the data.key from a copy of this folder; nothing has been changed.", file.display(), f.display()));
@@ -109,7 +135,7 @@ fn load_or_make_key(root: &std::path::Path) -> Result<[u8; 32], String> {
             let mut k = [0u8; 32];
             ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut k).map_err(|_| "Couldn't make this install's data key.".to_string())?;
             std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
-            crate::backend::util::write_atomic(&file, &k)?;
+            crate::backend::util::write_atomic(&file, &protect(&k)?)?;
             k
         }
     })
@@ -386,12 +412,32 @@ mod key_tests {
     fn each_install_makes_its_own_key_once() {
         let d = dir("new");
         let k1 = load_or_make_key(&d).unwrap();
-        assert_eq!(std::fs::read(d.join(DATA_KEY_FILE)).unwrap(), k1);
+        #[cfg(windows)]
+        {
+            let on_disk = std::fs::read(d.join(DATA_KEY_FILE)).unwrap();
+            assert!(on_disk.len() != 32 && !on_disk.windows(32).any(|w| w == k1), "the key is locked on disk, not stored as it is");
+        }
         assert_eq!(load_or_make_key(&d).unwrap(), k1, "the same key is read back");
         let other = dir("other");
         assert_ne!(load_or_make_key(&other).unwrap(), k1, "another install gets another key");
         let _ = std::fs::remove_dir_all(&d);
         let _ = std::fs::remove_dir_all(&other);
+    }
+
+    #[test]
+    fn an_earlier_unlocked_key_is_locked_in_place_and_stays_the_same() {
+        let d = dir("legacy");
+        let raw = [9u8; 32];
+        std::fs::write(d.join(DATA_KEY_FILE), raw).unwrap();
+        assert_eq!(load_or_make_key(&d).unwrap(), raw, "the old key is still the key");
+        #[cfg(windows)]
+        assert_ne!(std::fs::read(d.join(DATA_KEY_FILE)).unwrap(), raw, "and it is now locked on disk");
+        assert_eq!(load_or_make_key(&d).unwrap(), raw, "the locked file reads back as the same key");
+        // a file that is neither a raw key nor one this account locked is refused, never replaced
+        std::fs::write(d.join(DATA_KEY_FILE), [1u8; 200]).unwrap();
+        #[cfg(windows)]
+        assert!(load_or_make_key(&d).unwrap_err().contains("another Windows account"));
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

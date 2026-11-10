@@ -74,7 +74,11 @@ fn pack_tree(nodes: &Value, boards: &Value, w: &mut PackageWriter, used: &mut Ha
                 counts.buttons += buttons.as_array().map_or(0, |a| a.len() as u64);
                 let file = format!("pages/{}.json", page_slug(name, used));
                 w.add_json(&file, &json!({ "id": node["id"], "name": name, "cols": node["cols"], "rows": node["rows"], "buttons": buttons }))?;
-                out.push(json!({ "kind": "page", "id": node["id"], "name": name, "file": file }));
+                let mut entry = json!({ "kind": "page", "id": node["id"], "name": name, "file": file });
+                if let Some(c) = node.get("choice").and_then(|c| c.as_str()) {
+                    entry["choice"] = json!(c);
+                }
+                out.push(entry);
             }
             _ => return Err("The profile has an unknown kind of page.".into()),
         }
@@ -190,11 +194,16 @@ fn unpack_tree(nodes: &Value, pkg: &package::Package) -> Result<Value, String> {
             Some("page") => {
                 let file = node["file"].as_str().ok_or("A page in the file has no data.")?;
                 let page = pkg.json(file)?;
-                out.push(json!({
+                let mut p = json!({
                     "kind": "page", "id": node["id"], "name": page["name"],
                     "cols": page["cols"], "rows": page["rows"],
                     "buttons": page.get("buttons").cloned().unwrap_or_else(|| json!([])),
-                }));
+                });
+                // which of the profile's choices it belongs to ("obs"), when it has choices
+                if let Some(c) = node.get("choice").and_then(|c| c.as_str()) {
+                    p["choice"] = json!(c);
+                }
+                out.push(p);
             }
             _ => return Err("The file has an unknown kind of page.".into()),
         }

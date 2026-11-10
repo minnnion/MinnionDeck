@@ -16,6 +16,16 @@ mod generated;
 mod ui;
 mod views;
 
+/// The release exe has no console of its own: a command-line tool run from a terminal writes to
+/// that terminal instead.
+fn attach_console() {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+        let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
+
 fn main() -> eframe::Result {
     // Plugins run in a helper copy of this exe: nothing else may start before this
     if std::env::args().any(|a| a == backend::pluginhost::ARG) {
@@ -42,16 +52,54 @@ fn main() -> eframe::Result {
             }
         }
     }
+    // Release tools. --author-key "Name" makes this PC's author key once (the .mdkey to share is
+    // written to the current folder); --sign-release <installer.exe> writes <installer.exe>.sig,
+    // which goes up beside the installer in the GitHub release so the app accepts the update.
+    if args.iter().any(|a| a == "--author-key" || a == "--sign-release") {
+        attach_console();
+    }
+    if let Some(i) = args.iter().position(|a| a == "--author-key") {
+        let Some(name) = args.get(i + 1) else { eprintln!("Give your author name: --author-key \"Your name\""); std::process::exit(2) };
+        let root = backend::signing::author_root(&backend::paths::Paths::find().root);
+        let here = std::env::current_dir().unwrap_or_else(|_| root.clone());
+        match backend::signing::make_key(&root, name, &here) {
+            Ok(out) => {
+                println!("Made your author key. Share {} with whoever should trust your plugins.", out.display());
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        }
+    }
+    if let Some(i) = args.iter().position(|a| a == "--sign-release") {
+        let Some(file) = args.get(i + 1) else { eprintln!("Name the installer: --sign-release <installer.exe>"); std::process::exit(2) };
+        let root = backend::signing::author_root(&backend::paths::Paths::find().root);
+        match backend::signing::sign_release(&root, std::path::Path::new(file)) {
+            Ok((me, out)) => {
+                println!("Signed by {} (key {}): upload {} with the installer.", me.name, backend::signing::fingerprint(&me.key), out.display());
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        }
+    }
     if let Some(i) = args.iter().position(|a| a == "--add-profile" || a == "--add-profile-file") {
         let Some(id) = args.get(i + 1) else { eprintln!("Name the plugin."); std::process::exit(2) };
         let root = backend::paths::Paths::find().root;
         // --add-profile-file <file.mdprofile> adds a profile file from disk instead
         let r = if args.iter().any(|a| a == "--add-profile-file") {
-            backend::library::Library::add_profile_file(std::path::Path::new(id)).map(|n| format!("{n} added"))
+            let picked: Option<Vec<String>> = args.iter().position(|a| a == "--choose").and_then(|i| args.get(i + 1)).map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect());
+            backend::library::Library::add_profile_file(std::path::Path::new(id), picked.as_deref()).map(|n| format!("{n} added"))
         } else {
             // a profile that already follows this plugin is updated instead of added again
             backend::market::download_plugin_profile(&root, id).and_then(|d| {
-                let out = backend::library::Library::add_plugin_profile(&d.path, id, &d.plugin_name, &d.sha);
+                // --choose obs,twitch: only those pages of a profile that has choices
+                let picked: Option<Vec<String>> = args.iter().position(|a| a == "--choose").and_then(|i| args.get(i + 1)).map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect());
+                let out = backend::library::Library::add_plugin_profile(&d.path, id, &d.plugin_name, &d.sha, picked.as_deref());
                 let _ = std::fs::remove_file(&d.path);
                 out
             })

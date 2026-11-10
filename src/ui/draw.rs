@@ -299,16 +299,6 @@ impl<'a> Cv<'a> {
         }
     }
 
-    /// The tile colour an app logo sits on (its colour art background, else its brand colour).
-    pub fn si_bg(&self, id: &str) -> Option<Color32> {
-        let slug = id.strip_prefix("si:")?;
-        let rgb = |h: u32| Color32::from_rgb((h >> 16) as u8, (h >> 8) as u8, h as u8);
-        if let Some(a) = icons::brand_art().get(slug) {
-            return Some(rgb(a.bg));
-        }
-        icons::si_by_slug().get(slug).map(|&i| rgb(icons::si_icons()[i].colour))
-    }
-
     /// The `.pxsel-caret`: 12 x 9, rows of 12, 8 and 4 wide, 3px each.
     pub fn caret(&mut self, x: f32, y: f32, col: Color32) {
         self.fill(x, y, 12.0, 3.0, col);
@@ -417,15 +407,6 @@ impl<'a> Cv<'a> {
         self.text_fit(tx, y + (h - lh) / 2.0, lh, size, 400, th.ink, text, w - 2.0 * (bw + pad_x) - 12.0 - 10.0);
         self.caret(x + w - bw - pad_x - 12.0, y + (h - 9.0) / 2.0, th.ink);
         resp
-    }
-
-    /// A text field (`input`): drawn only, the content is whatever the caller passes.
-    pub fn input_box(&mut self, x: f32, y: f32, w: f32, h: f32, text: &str, size: f32, bw: f32, pad_x: f32) {
-        let th = self.th;
-        self.fill(x, y, w, h, th.tile);
-        self.border(x, y, w, h, bw, th.ink);
-        let lh = (size * 1.4 * 10.0).round() / 10.0;
-        self.text_fit(x + bw + pad_x, y + (h - lh) / 2.0, lh, size, 400, th.ink, text, w - 2.0 * (bw + pad_x));
     }
 
     /// `.chip`: small bordered label. Returns its width.

@@ -100,7 +100,7 @@ mod tests {
     use super::*;
 
     fn size_of(png_bytes: &[u8]) -> (u32, u32) {
-        let d = png::Decoder::new(png_bytes);
+        let d = png::Decoder::new(std::io::Cursor::new(png_bytes));
         let r = d.read_info().unwrap();
         (r.info().width, r.info().height)
     }

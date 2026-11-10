@@ -50,6 +50,21 @@ impl PluginGlue {
         (glue, note)
     }
 
+    /// Screenshots only (--chat-sample): a sample chat on button `button`.
+    pub fn sample_chat(&mut self, button: &str) -> std::sync::Arc<serde_json::Value> {
+        let items: Vec<serde_json::Value> = [
+            ("Pixelfox", "#FF7F50", "That jump was clean!"),
+            ("minnion_fan", "#9ACD32", "first time catching the stream live, hi everyone"),
+            ("NightOwl", "#1E90FF", "what keyboard is that?"),
+            ("cozy_cat", "#DAA520", "gg"),
+            ("Ravi", "", "The new deck layout looks great. Are the buttons from a plugin or did you draw them?"),
+            ("Pixelfox", "#FF7F50", "LUL"),
+        ].iter().enumerate().map(|(i, (n, c, t))| serde_json::json!([i.to_string(), n, c, t])).collect();
+        let d = std::sync::Arc::new(serde_json::json!({ "kind": "chat", "rev": 1, "items": items, "note": "" }));
+        self.live.entry(button.to_string()).or_default().data = Some(d.clone());
+        d
+    }
+
     pub fn running(&self) -> bool {
         self.rx.is_some()
     }
@@ -133,6 +148,17 @@ impl App {
                 Msg::Toast { plugin, text } => {
                     let name = self.plug.rows.iter().find(|p| p.id == plugin).map(|p| p.name.clone()).unwrap_or(plugin);
                     self.say(&format!("{name}: {text}"), now);
+                }
+                Msg::Data { button, data } => {
+                    let live = self.plug.live.entry(button).or_default();
+                    // the first one has everything; later ones only what changed
+                    let mut merged = live.data.as_deref().cloned().unwrap_or_else(|| serde_json::json!({}));
+                    if let (Some(m), Some(d)) = (merged.as_object_mut(), data.as_object()) {
+                        for (k, v) in d {
+                            m.insert(k.clone(), v.clone());
+                        }
+                    }
+                    live.data = Some(std::sync::Arc::new(merged));
                 }
                 Msg::OptionsChanged => {}
             }

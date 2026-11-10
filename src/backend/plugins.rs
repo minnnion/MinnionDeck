@@ -55,6 +55,8 @@ pub enum Msg {
     /// text and picture (`Some(None)` clears them). An icon is its name for the window and its PNG bytes.
     Button { button: String, state: Option<usize>, title: Option<Option<String>>, icon: Option<Option<(String, Vec<u8>)>> },
     Toast { plugin: String, text: String },
+    /// Live data a button draws itself (a chat): what changed, to merge into what it has
+    Data { button: String, data: Value },
     /// The choices of a dynamic dropdown changed
     OptionsChanged,
 }
@@ -383,8 +385,12 @@ impl Supervisor {
                 let icon = s("icon").and_then(|rel| read_icon(&self.dir.join(id), &rel).map(|b| (format!("live/{id}/{rel}"), b)));
                 self.emit(Msg::Button { button, state: None, title: None, icon: Some(icon) });
             }
-            // Live data a button draws itself (a map) isn't drawn by this app yet
-            Some("set_data") => {}
+            // live data a button draws itself (a chat); only what changed comes after the first
+            Some("set_data") => {
+                if let Some(data) = msg.get("data").filter(|d| d.is_object() && d.to_string().len() <= 256 * 1024) {
+                    self.emit(Msg::Data { button, data: data.clone() });
+                }
+            }
             Some("log") => log(&format!("Plugin {id}: {}", clip(s("text").unwrap_or_default(), 500))),
             Some("toast") => self.emit(Msg::Toast { plugin: id.to_string(), text: clip(s("text").unwrap_or_default(), 200) }),
             Some("set_setting") => {
@@ -811,7 +817,10 @@ pub enum Dyn {
 /// `Loading`; the window is repainted when the answer is in. Plugins say when the list changes.
 pub fn dynamic_options(kind: &str, field: &str, fields: &Value) -> Dyn {
     let Ok(sup) = sup() else { return Dyn::Unavailable };
-    let key = format!("{kind}|{field}");
+    // the other fields' values are part of it: a list can follow another field (Source after Scene)
+    let mut others: Vec<(String, String)> = fields.as_object().map(|m| m.iter().filter(|(k, _)| k.as_str() != field).map(|(k, v)| (k.clone(), v.to_string())).collect()).unwrap_or_default();
+    others.sort();
+    let key = format!("{kind}|{field}|{}", others.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join("&"));
     if let Some(d) = lock(&sup.options).get(&key) {
         return d.clone();
     }
@@ -967,20 +976,25 @@ pub(crate) fn unpack(file: &Path, to: &Path) -> Result<Manifest, String> {
         if entry.is_dir() {
             continue;
         }
-        let name = entry.name().replace('\\', "/");
+        let name = entry.name().map_err(|_| "The pack has a file name that can't be read.".to_string())?.replace('\\', "/");
         if !safe_rel(&name) {
             return Err(format!("The pack has a file outside the plugin folder: {name}"));
         }
-        total += entry.size();
-        if total > MAX_INSTALL_BYTES {
-            return Err("The pack is bigger than 200 MB unpacked.".into());
+        if entry.is_symlink() {
+            return Err(format!("The pack has a link instead of a file: {name}"));
         }
         let path = to.join(&name);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        let mut bytes = Vec::with_capacity(entry.size().min(MAX_INSTALL_BYTES) as usize);
-        entry.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+        // what really unpacks is counted, not what the zip claims, so a lying size can't fill the disk
+        let room = MAX_INSTALL_BYTES - total;
+        let mut bytes = Vec::with_capacity(entry.size().min(room) as usize);
+        (&mut entry).take(room + 1).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+        total += bytes.len() as u64;
+        if total > MAX_INSTALL_BYTES {
+            return Err("The pack is bigger than 200 MB unpacked.".into());
+        }
         fs::write(&path, bytes).map_err(|e| e.to_string())?;
     }
     let text = fs::read_to_string(to.join("manifest.json")).map_err(|_| "The pack has no manifest.json.".to_string())?;

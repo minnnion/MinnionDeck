@@ -429,7 +429,8 @@ impl Library {
     /// A button as the file keeps it: the one read (or the one it was copied from) with what
     /// the window changed put in.
     fn button_to_real(&self, t: &Tile, page_ids: &HashMap<String, String>, designs: &HashMap<String, Value>) -> Value {
-        let mut b = self.buttons.get(&t.id).or_else(|| self.buttons.get(&t.src)).cloned().unwrap_or_else(default_button);
+        // a button the file keeps as something other than an object (a damaged file) starts again
+        let mut b = self.buttons.get(&t.id).or_else(|| self.buttons.get(&t.src)).filter(|v| v.is_object()).cloned().unwrap_or_else(default_button);
         let size = format!("{}x{}", t.w, t.h);
         let o = b.as_object_mut().expect("object");
         o.insert("id".into(), json!(t.id));
@@ -847,9 +848,14 @@ impl Library {
     /// plugin it installed. On a library nobody has touched yet (only the empty "My profile"), the
     /// new profile takes its place, so a new install shows just the profiles of the plugins chosen.
     /// Returns the profile's name.
-    pub fn add_profile_file(path: &Path) -> Result<String, String> {
+    pub fn add_profile_file(path: &Path, picked: Option<&[String]>) -> Result<String, String> {
         let (mut lib, mut s, _) = Library::open();
         let bundle = super::profile_io::import_from(&lib.paths.media, path)?;
+        // with choices, only the chosen pages (none named: all)
+        let bundle = match picked {
+            Some(p) if !choices_of(&bundle).is_empty() => with_choices(&bundle, p),
+            _ => bundle,
+        };
         let name = Library::add_profile_file_to(&mut lib, &mut s, &bundle)?;
         lib.write()?;
         Ok(name)
@@ -1273,9 +1279,18 @@ impl Library {
 
     /// Marks the last profile added as plugin `plugin`'s ready-made one (from the file with `sha`).
     pub fn link_last_profile(&mut self, plugin: &str, sha: &str) {
+        self.link_last_profile_picked(plugin, sha, None);
+    }
+
+    /// The same, remembering which of the profile's choices were added (so its updates add the same).
+    pub fn link_last_profile_picked(&mut self, plugin: &str, sha: &str, picked: Option<&[String]>) {
         let Some(idx) = self.doc["profiles"].as_array().map(|a| a.len()).filter(|n| *n > 0).map(|n| n - 1) else { return };
         let base = self.profile_hash(idx);
-        self.doc["profiles"][idx]["from"] = json!({ "plugin": plugin, "sha": sha, "base": base });
+        let mut from = json!({ "plugin": plugin, "sha": sha, "base": base });
+        if let Some(p) = picked {
+            from["picked"] = json!(p);
+        }
+        self.doc["profiles"][idx]["from"] = from;
         self.force = true;
     }
 
@@ -1312,11 +1327,16 @@ impl Library {
     #[allow(clippy::too_many_arguments)]
     pub fn plugin_profile_changed(&mut self, s: &mut Sample, plugin: &str, plugin_name: &str, adopt: bool, bundle: &Value, sha: &str) -> Vec<PluginProfile> {
         self.store_pages(s);
-        let new = bundle_hash(bundle);
         let file_name = bundle.get("profile").map(|p| str_of(p, "name").to_string()).unwrap_or_default();
         let mut out = vec![];
+        let all = bundle;
         for id in self.plugin_profiles(plugin, plugin_name, adopt) {
             let Some(idx) = self.profile_index(&id) else { continue };
+            // only the pages that were chosen when it was added
+            let picked: Option<Vec<String>> = self.doc["profiles"][idx].get("from").and_then(|f| f.get("picked")).and_then(|p| serde_json::from_value(p.clone()).ok());
+            let chosen = picked.as_ref().map(|p| with_choices(all, p));
+            let bundle = chosen.as_ref().unwrap_or(all);
+            let new = bundle_hash(bundle);
             let cur = self.profile_hash(idx);
             let name = str_of(&self.doc["profiles"][idx], "name").to_string();
             let base = self.doc["profiles"][idx].get("from").map(|f| str_of(f, "base").to_string());
@@ -1328,11 +1348,19 @@ impl Library {
             }
             if cur == new {
                 self.doc["profiles"][idx]["from"] = json!({ "plugin": plugin, "sha": sha, "base": new });
+                if let Some(p) = &picked {
+                    self.doc["profiles"][idx]["from"]["picked"] = json!(p);
+                }
                 self.force = true;
                 out.push(PluginProfile::Same);
             } else if base.as_deref() == Some(cur.as_str()) {
                 match self.replace_profile(s, &id, bundle, plugin, sha) {
-                    Ok(n) => out.push(PluginProfile::Updated(n)),
+                    Ok(n) => {
+                        if let (Some(p), Some(i)) = (&picked, self.profile_index(&id)) {
+                            self.doc["profiles"][i]["from"]["picked"] = json!(p);
+                        }
+                        out.push(PluginProfile::Updated(n))
+                    }
                     Err(_) => out.push(PluginProfile::Edited(id, name)),
                 }
             } else {
@@ -1400,12 +1428,15 @@ impl Library {
     /// Setup's starter profile after it installed or updated plugin `plugin`: the profiles that
     /// follow it are updated (see plugin_profile_changed); it is added only when none does.
     /// Returns what happened, in words.
-    pub fn add_plugin_profile(path: &Path, plugin: &str, plugin_name: &str, sha: &str) -> Result<String, String> {
+    pub fn add_plugin_profile(path: &Path, plugin: &str, plugin_name: &str, sha: &str, picked: Option<&[String]>) -> Result<String, String> {
         let (mut lib, mut s, _) = Library::open();
         let bundle = super::profile_io::import_from(&lib.paths.media, path)?;
         if lib.plugin_profiles(plugin, plugin_name, true).is_empty() {
-            let name = Library::add_profile_file_to(&mut lib, &mut s, &bundle)?;
-            lib.link_last_profile(plugin, sha);
+            // with choices, only the chosen pages (none named: all of them)
+            let picked: Option<Vec<String>> = if choices_of(&bundle).is_empty() { None } else { Some(picked.map(|p| p.to_vec()).unwrap_or_else(|| choices_of(&bundle).into_iter().map(|c| c.0).collect())) };
+            let chosen = picked.as_ref().map(|p| with_choices(&bundle, p));
+            let name = Library::add_profile_file_to(&mut lib, &mut s, chosen.as_ref().unwrap_or(&bundle))?;
+            lib.link_last_profile_picked(plugin, sha, picked.as_deref());
             lib.write()?;
             return Ok(format!("{name} added"));
         }
@@ -1421,6 +1452,59 @@ impl Library {
             .collect();
         Ok(said.join(", "))
     }
+}
+
+/// A profile's choices, when it has them: (id, label), from profile.choices
+/// ([{"id":"obs","label":"OBS Studio"}]). Each page of a choice says so ("choice":"obs").
+pub fn choices_of(bundle: &Value) -> Vec<(String, String)> {
+    bundle["profile"]["choices"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|c| {
+            let id = c.get("id")?.as_str()?.to_string();
+            let label = c.get("label").and_then(|l| l.as_str()).unwrap_or(&id).to_string();
+            (!id.is_empty()).then_some((id, label))
+        })
+        .collect()
+}
+
+/// The profile with only the pages of the `picked` choices (pages that belong to no choice stay;
+/// folders left empty go). A page belongs to a choice by its own "choice", or by its id in the
+/// choice's "pages" list (that one survives packing).
+pub fn with_choices(bundle: &Value, picked: &[String]) -> Value {
+    let by_id: HashMap<String, String> = bundle["profile"]["choices"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|c| {
+            let id = str_of(c, "id").to_string();
+            c.get("pages").and_then(|p| p.as_array()).into_iter().flatten().filter_map(|p| p.as_str()).map(move |p| (p.to_string(), id.clone())).collect::<Vec<_>>()
+        })
+        .collect();
+    fn keep(nodes: &Value, picked: &[String], by_id: &HashMap<String, String>) -> Value {
+        let mut out = vec![];
+        for n in nodes.as_array().into_iter().flatten() {
+            if str_of(n, "kind") == "folder" {
+                let kids = keep(&n["children"], picked, by_id);
+                if kids.as_array().is_some_and(|k| !k.is_empty()) {
+                    let mut f = n.clone();
+                    f["children"] = kids;
+                    out.push(f);
+                }
+            } else {
+                let choice = n.get("choice").and_then(|c| c.as_str()).or_else(|| by_id.get(str_of(n, "id")).map(|s| s.as_str()));
+                match choice {
+                    Some(c) if !picked.iter().any(|p| p == c) => {}
+                    _ => out.push(n.clone()),
+                }
+            }
+        }
+        Value::Array(out)
+    }
+    let mut b = bundle.clone();
+    b["profile"]["tree"] = keep(&bundle["profile"]["tree"], picked, &by_id);
+    b
 }
 
 #[cfg(test)]
@@ -1804,14 +1888,6 @@ mod real_migration {
     use super::*;
     use crate::backend::package::Kind;
 
-    fn copy_dir(from: &Path, to: &Path) {
-        std::fs::create_dir_all(to).unwrap();
-        for e in std::fs::read_dir(from).unwrap().flatten() {
-            let (p, d) = (e.path(), to.join(e.file_name()));
-            if p.is_dir() { copy_dir(&p, &d) } else { std::fs::copy(&p, &d).unwrap(); }
-        }
-    }
-
     #[test]
     #[ignore]
     fn real_data_seals_without_losing_anything() {
@@ -1870,4 +1946,31 @@ fn fn_first_page(tree: Option<&Value>) -> String {
         }
     }
     String::new()
+}
+
+#[cfg(test)]
+mod choice_tests {
+    use super::*;
+
+    #[test]
+    fn only_the_chosen_pages_are_added() {
+        let b = json!({ "profile": { "name": "Streaming", "choices": [{ "id": "obs", "label": "OBS Studio" }, { "id": "twitch", "label": "Twitch" }],
+            "tree": [
+                { "kind": "page", "id": "home", "name": "Home" },
+                { "kind": "page", "id": "o", "name": "OBS", "choice": "obs" },
+                { "kind": "folder", "id": "f", "name": "More", "children": [{ "kind": "page", "id": "t", "name": "Twitch", "choice": "twitch" }] }
+            ] } });
+        assert_eq!(choices_of(&b), vec![("obs".to_string(), "OBS Studio".to_string()), ("twitch".into(), "Twitch".into())]);
+        let only_obs = with_choices(&b, &["obs".to_string()]);
+        let names: Vec<&str> = only_obs["profile"]["tree"].as_array().unwrap().iter().map(|n| n["name"].as_str().unwrap()).collect();
+        assert_eq!(names, vec!["Home", "OBS"], "a page of no choice stays, an emptied folder goes");
+        let both = with_choices(&b, &["obs".to_string(), "twitch".to_string()]);
+        assert_eq!(both["profile"]["tree"].as_array().unwrap().len(), 3);
+        assert!(choices_of(&json!({ "profile": { "tree": [] } })).is_empty(), "a profile without choices asks nothing");
+        // a packed profile's pages lose "choice"; the choice's list of page ids still says
+        let packed = json!({ "profile": { "choices": [{ "id": "obs", "label": "OBS", "pages": ["o"] }, { "id": "twitch", "label": "Twitch", "pages": ["t"] }],
+            "tree": [{ "kind": "page", "id": "o", "name": "OBS" }, { "kind": "page", "id": "t", "name": "Twitch" }] } });
+        let t = with_choices(&packed, &["twitch".to_string()]);
+        assert_eq!(t["profile"]["tree"].as_array().unwrap().iter().map(|n| n["name"].as_str().unwrap()).collect::<Vec<_>>(), vec!["Twitch"]);
+    }
 }

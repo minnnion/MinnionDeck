@@ -1,5 +1,5 @@
 //! The action catalogue: the built-in actions and the actions of every plugin in
-//! E:\minniondeck\plugins (their actions.json). Made by a script; do not edit by hand.
+//! the plugins folder (their actions.json). Made by a script; do not edit by hand.
 #![allow(dead_code)]
 
 pub struct Field {

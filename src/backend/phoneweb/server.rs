@@ -5,6 +5,7 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::{Receiver, channel};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use rustls::{ServerConfig, ServerConnection, StreamOwned};
@@ -28,13 +29,17 @@ const SILENCE: Duration = Duration::from_secs(45);
 /// Serves the page on a plain port (what the QR opens: no certificate, so no warning) and, when
 /// there is a certificate, on a second port over HTTPS.
 pub fn serve(hub: Arc<Hub>, http: TcpListener, https: Option<(TcpListener, Arc<ServerConfig>)>) {
-    let h = hub.clone();
+    // both ports share one count, so nobody on the network can open threads without end
+    let open = Arc::new(AtomicUsize::new(0));
+    let (h, n) = (hub.clone(), open.clone());
     std::thread::Builder::new()
         .name("phone server".into())
         .spawn(move || {
             for stream in http.incoming().flatten() {
+                let Some(slot) = take_slot(&n) else { continue };
                 let hub = h.clone();
                 let _ = std::thread::Builder::new().name("phone connection".into()).spawn(move || {
+                    let _slot = slot;
                     let _ = handle_plain(hub, stream);
                 });
             }
@@ -45,14 +50,33 @@ pub fn serve(hub: Arc<Hub>, http: TcpListener, https: Option<(TcpListener, Arc<S
             .name("phone server (https)".into())
             .spawn(move || {
                 for stream in listener.incoming().flatten() {
+                    let Some(slot) = take_slot(&open) else { continue };
                     let (hub, tls) = (hub.clone(), tls.clone());
                     let _ = std::thread::Builder::new().name("phone connection".into()).spawn(move || {
+                        let _slot = slot;
                         let _ = handle(hub, tls, stream);
                     });
                 }
             })
             .ok();
     }
+}
+
+/// Connections served at once, on both ports together. Each paired phone keeps one open; more than
+/// this are closed as soon as they arrive.
+pub(crate) const MAX_CONNECTIONS: usize = 64;
+
+/// A connection's place in the count, given back when the connection ends (however it ends).
+struct Slot(Arc<AtomicUsize>);
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+fn take_slot(open: &Arc<AtomicUsize>) -> Option<Slot> {
+    open.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| (n < MAX_CONNECTIONS).then_some(n + 1)).ok().map(|_| Slot(open.clone()))
 }
 
 /// A stream whose reads can be made to wait only a moment.

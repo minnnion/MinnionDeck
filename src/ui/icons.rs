@@ -62,6 +62,8 @@ pub fn glyphs() -> &'static HashMap<&'static str, Vec<&'static str>> {
 const SI_DATA: &str = include_str!("../../assets/si_icons.txt");
 const ART_DATA: &str = include_str!("../../assets/brand_art.txt");
 
+// Every field of the logo data is read in; `colour` isn't drawn yet
+#[allow(dead_code)]
 pub struct SiIcon {
     pub slug: &'static str,
     pub name: &'static str,
@@ -98,6 +100,7 @@ pub fn si_by_slug() -> &'static HashMap<&'static str, usize> {
 }
 
 /// Hand-made colour logos: 16x16 pixels, a palette and the colour of the tile they sit on.
+#[allow(dead_code)]
 pub struct Art {
     pub bg: u32,
     pub palette: Vec<(char, u32)>,

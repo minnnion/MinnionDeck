@@ -6,6 +6,10 @@
 //! temp folder, checks its size and the SHA-256 GitHub lists for it, then starts it and closes so
 //! the installer can replace the app. A download without GitHub's checksum is refused.
 //!
+//! The installer must also be signed: the release needs `<installer>.sig` beside it, made with
+//! `Minniondeck.exe --sign-release <installer.exe>` on the PC that has the minnion author key. It
+//! is checked against the built-in authors' keys (signing.rs); an unsigned release is refused.
+//!
 //! WHERE RELEASES COME FROM is not in the code: it is <data>\update.json, made on the first start
 //! with the three addresses empty, which means "updates aren't set up yet" (this app is not the
 //! Tauri app, so it must never offer that app's releases as its own update). Fill it in:
@@ -249,6 +253,9 @@ pub fn download(root: &Path, progress: impl Fn(u64, u64)) -> Result<String, Stri
     if a.size == 0 || a.size > MAX_INSTALLER_BYTES {
         return Err("GitHub's information about this installer doesn't look right, so it wasn't downloaded.".into());
     }
+    // The installer must be signed with MinnionDeck's own key, not only listed by GitHub: a
+    // release someone else managed to upload is refused before anything runs.
+    let sig = fetch_signature(&r, &src, &a.name)?;
     let dir = update_dir();
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).map_err(|e| format!("Couldn't make a folder for the download: {e}"))?;
@@ -286,6 +293,7 @@ pub fn download(root: &Path, progress: impl Fn(u64, u64)) -> Result<String, Stri
         if hex != sha {
             return Err("The download doesn't match GitHub's checksum, so it wasn't kept.".into());
         }
+        super::signing::verify_release(&sig, &a.name, &hex)?;
         out.flush().map_err(|e| e.to_string())
     })();
     if let Err(e) = result {
@@ -294,6 +302,24 @@ pub fn download(root: &Path, progress: impl Fn(u64, u64)) -> Result<String, Stri
     }
     *READY.lock().unwrap_or_else(|e| e.into_inner()) = Some(path);
     Ok(a.name)
+}
+
+/// The signature uploaded beside the installer (`<installer>.sig`), from this repository's downloads
+fn fetch_signature(r: &Release, src: &Source, installer: &str) -> Result<Vec<u8>, String> {
+    const MAX_SIG_BYTES: u64 = 64 * 1024;
+    let want = super::signing::release_sig_name(installer);
+    let a = r
+        .assets
+        .iter()
+        .find(|a| a.name == want && a.browser_download_url.starts_with(&src.download_prefix))
+        .ok_or("This release's installer isn't signed by MinnionDeck, so it wasn't downloaded.")?;
+    if a.size == 0 || a.size > MAX_SIG_BYTES {
+        return Err("This release's signature doesn't look right, so it wasn't downloaded.".into());
+    }
+    let resp = agent().get(&a.browser_download_url).call().map_err(|_| "Couldn't download the update's signature. Try again.".to_string())?;
+    let mut sig = Vec::new();
+    resp.into_reader().take(MAX_SIG_BYTES).read_to_end(&mut sig).map_err(|_| "Couldn't download the update's signature. Try again.".to_string())?;
+    Ok(sig)
 }
 
 /// Stop the download that is running, if any

@@ -122,9 +122,40 @@ fn http_get(port: u16, path: &str) -> (String, Vec<u8>) {
 }
 
 #[test]
+fn too_many_connections_at_once_are_closed_and_places_come_back() {
+    let (hub, _rx, root) = server("cap");
+    // fill every place with connections that say nothing (half on each port)
+    let held: Vec<TcpStream> = (0..super::server::MAX_CONNECTIONS)
+        .map(|i| TcpStream::connect(("127.0.0.1", if i % 2 == 0 { hub.port } else { hub.tls_port })).unwrap())
+        .collect();
+    std::thread::sleep(Duration::from_millis(300));
+    // one more is closed straight away, on either port
+    for port in [hub.port, hub.tls_port] {
+        let mut extra = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        extra.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let _ = extra.write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        let mut out = Vec::new();
+        let t0 = std::time::Instant::now();
+        let _ = extra.read_to_end(&mut out);
+        assert!(out.is_empty() && t0.elapsed() < Duration::from_secs(2), "the extra connection was served");
+    }
+    // once they go, the page is served again
+    drop(held);
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(http_get(hub.port, "/").0, "HTTP/1.1 200 OK");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
 fn the_plain_page_has_no_certificate_and_pairs_the_same() {
     let (hub, rx, root) = server("plain");
     assert!(hub.tls_port > hub.port && hub.base_url().starts_with("http://") && hub.secure_url().unwrap().starts_with("https://"));
+    // the QR opens the plain page, or the HTTPS one when Secure phone link is on; the code rides after #
+    assert!(hub.url().starts_with(&hub.base_url()) && hub.url().ends_with(&format!("#{}", hub.code())));
+    hub.secure_link.store(true, Ordering::Relaxed);
+    assert_eq!(hub.page_url(), hub.secure_url().unwrap());
+    assert!(hub.url().starts_with("https://") && hub.url().ends_with(&format!("#{}", hub.code())));
+    hub.secure_link.store(false, Ordering::Relaxed);
     let (status, body) = http_get(hub.port, "/");
     assert_eq!(status, "HTTP/1.1 200 OK");
     assert!(String::from_utf8_lossy(&body).contains("Pair with your PC"));
@@ -133,7 +164,7 @@ fn the_plain_page_has_no_certificate_and_pairs_the_same() {
     let tcp = TcpStream::connect(("127.0.0.1", hub.port)).unwrap();
     tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
     let (mut phone, _) = tungstenite::client(format!("ws://localhost:{}/ws", hub.port), tcp).unwrap();
-    let mut read_t = |w: &mut WebSocket<TcpStream>, t: &str| -> Value {
+    let read_t = |w: &mut WebSocket<TcpStream>, t: &str| -> Value {
         for _ in 0..40 {
             let Message::Text(txt) = w.read().unwrap() else { continue };
             let v: Value = serde_json::from_str(txt.as_str()).unwrap();

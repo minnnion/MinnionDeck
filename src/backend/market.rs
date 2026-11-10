@@ -430,18 +430,51 @@ pub fn load_cache(root: &Path) -> Option<usize> {
     if let Ok(mut l) = LIVE.write() {
         *l = Some(list);
     }
+    for p in list {
+        if let Ok(bytes) = fs::read(icon_file(root, p.id)) {
+            crate::ui::images::register_live(&format!("market/{}", p.id), bytes);
+        }
+    }
     Some(list.len())
+}
+
+fn icon_file(root: &Path, id: &str) -> PathBuf {
+    root.join("market-icons").join(format!("{id}.png"))
+}
+
+/// Each plugin's picture from the marketplace (plugins/<id>/icon.png), for its card: kept in
+/// <data>\market-icons\ and shown as "png:market/<id>". Blocks; call it from a thread.
+fn fetch_icons(root: &Path, src: &Source, list: &[MarketPlugin]) {
+    let _ = fs::create_dir_all(root.join("market-icons"));
+    for p in list.iter().filter(|p| safe_name(p.id)) {
+        let url = format!("{}/plugins/{}/icon.png", src.files_base, p.id);
+        let Ok(resp) = agent().get(&url).call() else { continue };
+        let mut bytes = Vec::new();
+        if resp.into_reader().take(256 * 1024).read_to_end(&mut bytes).is_err() || !bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+            continue;
+        }
+        let _ = write_atomic(&icon_file(root, p.id), &bytes);
+        crate::ui::images::register_live(&format!("market/{}", p.id), bytes);
+    }
+}
+
+/// The picture for plugin `id`'s card: the marketplace's own, once it has come.
+pub fn card_icon(id: &str) -> Option<String> {
+    let key = format!("market/{id}");
+    crate::ui::images::has_live(&key).then(|| format!("png:{key}"))
 }
 
 /// Reads the marketplace's list again (from the address in market.json), keeps a copy, and shows
 /// it. Returns how many plugins. Blocks; call it from a thread.
 pub fn refresh(root: &Path) -> Result<usize, String> {
-    let text = fetch_index_text(&Source::load(root))?;
+    let src = Source::load(root);
+    let text = fetch_index_text(&src)?;
     let list = parse_list(&text)?;
     let _ = write_atomic(&cache_file(root), text.as_bytes());
     if let Ok(mut l) = LIVE.write() {
         *l = Some(list);
     }
+    fetch_icons(root, &src, list);
     Ok(list.len())
 }
 

@@ -64,8 +64,24 @@ pub fn plugin_icons() -> Vec<(&'static str, &'static str)> {
 }
 
 /// Whether a plugin picture ("plugin/name") can be drawn: built in, or read from the plugin.
+/// A picture of an installed plugin that isn't known yet is read from <data>\plugins\<id>\icons\
+/// (for screenshots, the setup's --add-profile, and plugins installed while the app runs).
 pub fn has_picture(key: &str) -> bool {
-    gen_catalog::png(key).is_some() || crate::ui::images::has_live(key)
+    if gen_catalog::png(key).is_some() || crate::ui::images::has_live(key) {
+        return true;
+    }
+    let Some((id, name)) = key.split_once('/') else { return false };
+    if !safe_name(id) || !safe_name(name) {
+        return false;
+    }
+    let folder = crate::backend::paths::Paths::find().root.join("plugins").join(id);
+    match read_icon(&folder, &format!("icons/{name}.png")) {
+        Some(bytes) => {
+            crate::ui::images::register_live(key, bytes);
+            true
+        }
+        None => false,
+    }
 }
 
 fn leak(s: &str) -> &'static str {

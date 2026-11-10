@@ -6,6 +6,8 @@ const fn c(hex: u32) -> Color32 {
 }
 
 #[derive(Clone, Copy)]
+// The design's whole palette: a few colours aren't drawn anywhere yet
+#[allow(dead_code)]
 pub struct Theme {
     pub dark: bool,
     pub ground: Color32,
@@ -120,16 +122,6 @@ impl Theme {
                 Some(col) if (0.299 * col.r() as f32 + 0.587 * col.g() as f32 + 0.114 * col.b() as f32) < 140.0 => c(0xe4eaf6),
                 _ => self.on_accent,
             },
-        }
-    }
-    pub fn accent_dark(&self, name: &str) -> Color32 {
-        match name {
-            "mint" => self.mint_dark,
-            "sky" => self.sky_dark,
-            "lilac" => self.lilac_dark,
-            "peach" => self.peach_dark,
-            "coral" => self.coral_dark,
-            _ => self.ink,
         }
     }
 }

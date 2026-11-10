@@ -288,6 +288,13 @@ impl App {
         }
         while let Ok(m) = self.io.rx.try_recv() {
             match m {
+                // a profile with choices asks which pages first
+                IoMsg::Imported(Ok(bundle)) if !crate::backend::library::choices_of(&bundle).is_empty() => {
+                    self.choose_pages = Some(crate::views::choose_pages::ChoosePages::new(bundle, None));
+                }
+                IoMsg::PluginProfile { plugin, add: true, result: Ok((bundle, sha, _)), .. } if !crate::backend::library::choices_of(&bundle).is_empty() => {
+                    self.choose_pages = Some(crate::views::choose_pages::ChoosePages::new(bundle, Some((plugin, sha))));
+                }
                 IoMsg::Imported(Ok(bundle)) => match self.lib.import_bundle(&mut self.sample, &bundle) {
                     Ok((name, pages, buttons)) => {
                         self.fresh_profile = Some((self.sample.profiles.len().saturating_sub(1), now));

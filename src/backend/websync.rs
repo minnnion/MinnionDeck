@@ -269,6 +269,11 @@ fn json_reply(stream: &mut TcpStream, status: &str, origin: Option<&str>, v: ser
     reply(stream, status, origin, "application/json", v.to_string().as_bytes())
 }
 
+/// The Edit window's key and the one sent, compared in full whatever the first wrong character is
+fn same_key(want: &str, got: &str) -> bool {
+    !got.is_empty() && want.len() == got.len() && want.bytes().zip(got.bytes()).fold(0u8, |a, (x, y)| a | (x ^ y)) == 0
+}
+
 fn token_of(query: &str) -> String {
     query.split('&').find_map(|kv| kv.strip_prefix("token=")).unwrap_or("").to_string()
 }
@@ -339,7 +344,7 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {
     let key = token_of(&req.query);
     let session = {
         let s = lock(&SESSION);
-        s.as_ref().filter(|x| !key.is_empty() && x.key == key).map(|x| (x.editor, x.look, x.kind, x.name.clone(), x.current.clone(), x.layers.clone()))
+        s.as_ref().filter(|x| same_key(&x.key, &key)).map(|x| (x.editor, x.look, x.kind, x.name.clone(), x.current.clone(), x.layers.clone()))
     };
     let Some((editor, look, kind, name, current, layers)) = session else {
         return json_reply(&mut stream, "401 Unauthorized", o, json!({ "ok": false, "error": "This link has expired. Press Edit image in MinnionDeck again." }));

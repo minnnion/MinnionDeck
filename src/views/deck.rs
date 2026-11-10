@@ -483,7 +483,7 @@ pub fn draw(app: &mut App, cv: &mut Cv, w: f32, h: f32) -> f32 {
                     None => (rz.w, rz.h),
                 },
             };
-            // only four sizes: 1 × 1, 2 × 1, 1 × 2, 2 × 2
+            // up to 3 × 3, as the grid has room
             rz.w = w.clamp(1, MAX_SPAN.min(cols - t.col));
             rz.h = h.clamp(1, MAX_SPAN.min(rows - t.row));
             rz.ok = !tiles.iter().any(|(j, o)| *j != rz.tile && overlaps(o, t.col, t.row, rz.w, rz.h));
@@ -664,9 +664,27 @@ pub fn draw(app: &mut App, cv: &mut Cv, w: f32, h: f32) -> f32 {
                 any_anim |= p < 1.0;
             }
         }
+        let chat = t.live.data.as_deref().filter(|d| d.get("kind").and_then(|k| k.as_str()) == Some("chat"));
+        let (label, icon) = if chat.is_some() { ("", "none") } else { (label, icon) };
         let face = Face { media: Some(t.media_now()), colour, icon, label, dashed: app.edit_layout, hover, down, xf, pop };
         let fw_ = tw_ * fx;
         tile_face(cv, x + (tw_ - fw_) / 2.0, y, fw_, th_, &face);
+        if let Some(d) = chat {
+            if fx > 0.9 {
+                // the wheel scrolls back through it (0: the newest at the bottom)
+                let key = t.id.clone();
+                let mut back = app.chat_scroll.get(&key).copied().unwrap_or(0.0);
+                if resp.hovered() && !app.edit_layout {
+                    let dy = ctx.input(|inp| inp.smooth_scroll_delta.y);
+                    if dy != 0.0 {
+                        back = (back + dy).max(0.0);
+                    }
+                }
+                let max = draw_chat(cv, x, y, tw_, th_, d, back);
+                back = back.min(max);
+                app.chat_scroll.insert(key, back);
+            }
+        }
         if app.selected_tile == Some(i) {
             cv.border(x - 2.0 - 6.0, y - 2.0 - 6.0, tw_ + 4.0 + 12.0, th_ + 4.0 + 12.0, 4.0, th.coral_dark);
         }
@@ -906,8 +924,8 @@ pub struct Resize {
 /// How long a grid size change glides.
 const GRID_ANIM: f64 = 0.35;
 
-/// A button is at most 2 cells wide and 2 tall.
-pub const MAX_SPAN: usize = 2;
+/// A button is at most 3 cells wide and 3 tall (a chat is 2 x 3).
+pub const MAX_SPAN: usize = 3;
 
 /// Whether button `t` covers any cell of the area at (c, r), w x h cells.
 fn overlaps(t: &Tile, c: usize, r: usize, w: usize, h: usize) -> bool {
@@ -1245,4 +1263,73 @@ fn keyboard(app: &mut App, cv: &mut Cv, now: f64) {
             _ => {}
         }
     }
+}
+
+/// A chat a plugin sends (set_data {"kind":"chat","items":[[id, name, colour, text]…],"note":…}),
+/// drawn over its button: newest at the bottom, each name in its colour above its words, wrapped.
+/// `back` is how far it is scrolled up from the newest. Returns how far it can be.
+pub fn draw_chat(cv: &mut Cv, x: f32, y: f32, w: f32, h: f32, d: &serde_json::Value, back: f32) -> f32 {
+    let th = cv.th;
+    let (ix, iy, iw, ih) = (x + 4.0, y + 4.0, w - 8.0, h - 8.0);
+    let bg = Color32::from_rgb(0x1a, 0x1f, 0x2c);
+    let ink = Color32::from_rgb(0xe4, 0xea, 0xf6);
+    cv.fill(ix, iy, iw, ih, bg);
+    let pad = 10.0;
+    let tw = iw - 2.0 * pad;
+    let (fs_name, fs_text) = ((w.min(h) * 0.07).clamp(11.0, 14.0), (w.min(h) * 0.075).clamp(12.0, 15.0));
+    let (lh_name, lh_text) = ((fs_name * 1.3).round(), (fs_text * 1.35).round());
+    // the status line on top, when there is one
+    let note = d.get("note").and_then(|n| n.as_str()).unwrap_or("");
+    let mut top = iy + pad;
+    if !note.is_empty() {
+        let nh = cv.wrap_lines(tw, fs_name, 600, note) as f32 * lh_name;
+        cv.para(ix + pad, top, tw, lh_name, fs_name, 600, th.sun, note);
+        top += nh + 6.0;
+        cv.fill(ix + pad, top, tw, 2.0, with_alpha(ink, 0.15));
+        top += 8.0;
+    }
+    let items: Vec<&serde_json::Value> = d.get("items").and_then(|i| i.as_array()).map(|a| a.iter().collect()).unwrap_or_default();
+    if items.is_empty() {
+        if note.is_empty() {
+            cv.text_c(ix, iw, iy + ih / 2.0 - 10.0, 20.0, fs_text, 400, with_alpha(ink, 0.5), "No messages yet");
+        }
+        return 0.0;
+    }
+    // each message's height, then lay them out from the bottom up
+    let s = |v: &serde_json::Value, i: usize| v.get(i).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let heights: Vec<f32> = items.iter().map(|m| lh_name + cv.wrap_lines(tw, fs_text, 400, &s(m, 3)).max(1) as f32 * lh_text + 8.0).collect();
+    let total: f32 = heights.iter().sum();
+    let view = iy + ih - pad - top;
+    let max = (total - view).max(0.0);
+    let back = back.min(max);
+    let old = cv.clip_push(ix, top, iw, view);
+    let mut by = iy + ih - pad + back;
+    for (m, hgt) in items.iter().zip(&heights).rev() {
+        by -= hgt;
+        if by > iy + ih {
+            continue;
+        }
+        if by + hgt < top {
+            break;
+        }
+        let name = s(m, 1);
+        let col = crate::ui::theme::hex(&s(m, 2)).map(|c| readable(c)).unwrap_or(th.mint);
+        cv.text_fit(ix + pad, by, lh_name, fs_name, 700, col, &name, tw);
+        cv.para(ix + pad, by + lh_name, tw, lh_text, fs_text, 400, ink, &s(m, 3));
+    }
+    cv.clip_pop(old);
+    // scrolled up: a small bar shows where
+    if max > 0.0 && back > 0.0 {
+        let frac = view / total;
+        let bh = (view * frac).max(16.0);
+        let pos = 1.0 - back / max;
+        cv.fill(ix + iw - 5.0, top + (view - bh) * pos, 3.0, bh, with_alpha(ink, 0.4));
+    }
+    max
+}
+
+/// A name colour lightened until it reads on the dark chat.
+fn readable(c: Color32) -> Color32 {
+    let l = 0.299 * c.r() as f32 + 0.587 * c.g() as f32 + 0.114 * c.b() as f32;
+    if l < 110.0 { lerp(c, Color32::WHITE, ((110.0 - l) / 160.0 + 0.25).min(0.7)) } else { c }
 }

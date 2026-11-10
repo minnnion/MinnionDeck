@@ -6,15 +6,15 @@
 //!   .mdmedia   a picture or GIF you imported (the name keeps its own ending: pic.png.mdmedia)
 //!   .mdprofile, .mdbackup   made by Export and Back up (package.rs)
 //!
-//! The key ships inside the app, so these files are locked, not secret: nobody can open one by
-//! hand or with another tool, but anything with this app can. They move between PCs as they are.
+//! .mdsave, .mdmedia and .mdbackup use this install's own key (data.key, locked to the Windows
+//! account with DPAPI), so they open only for that account on this PC. To move to another PC,
+//! export profiles (.mdprofile uses a shared key and opens anywhere). See package.rs.
 //!
 //! Data kept in plain files by an earlier version is changed over by `migrate`: the sealed file is
 //! written and read back first, and only then is the plain one removed.
-#![allow(dead_code)]
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde_json::Value;
 
@@ -60,11 +60,6 @@ pub fn migrate(plain: &Path, sealed: &Path, kind: Kind) -> Result<bool, String> 
     Ok(true)
 }
 
-/// The sealed file for a plain one: `x.json` → `x.mdsave`.
-pub fn sealed_name(plain: &Path) -> PathBuf {
-    plain.with_extension(SAVE_EXT)
-}
-
 /// Whether a path is a sealed file of ours by its ending.
 pub fn is_sealed(path: &Path) -> bool {
     matches!(path.extension().and_then(|e| e.to_str()), Some(SAVE_EXT | MEDIA_EXT))
@@ -73,6 +68,7 @@ pub fn is_sealed(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use crate::backend::util::now_ms;
 
     fn dir(tag: &str) -> PathBuf {
@@ -119,7 +115,6 @@ mod tests {
         assert!(!migrate(&plain, &sealed, Kind::Save).unwrap());
         assert!(plain.exists());
         assert_eq!(read_json(&sealed, Kind::Save).unwrap()["data"]["profiles"][0], "mine");
-        assert_eq!(sealed_name(Path::new("x/y/settings.json")), PathBuf::from("x/y/settings.mdsave"));
         assert!(is_sealed(Path::new("a.mdmedia")) && is_sealed(Path::new("a.mdsave")) && !is_sealed(Path::new("a.json")));
         let _ = fs::remove_dir_all(&d);
     }

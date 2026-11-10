@@ -44,10 +44,10 @@ thread_local! {
 }
 
 fn decode(data: &[u8]) -> Option<ColorImage> {
-    let mut dec = png::Decoder::new(data);
+    let mut dec = png::Decoder::new(std::io::Cursor::new(data));
     dec.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut reader = dec.read_info().ok()?;
-    let mut buf = vec![0; reader.output_buffer_size()];
+    let mut buf = vec![0; reader.output_buffer_size()?];
     let info = reader.next_frame(&mut buf).ok()?;
     let (w, h) = (info.width as usize, info.height as usize);
     let px = &buf[..info.buffer_size()];
@@ -64,14 +64,17 @@ fn decode(data: &[u8]) -> Option<ColorImage> {
 pub fn texture(ctx: &Context, name: &str) -> Option<egui::TextureId> {
     CACHE.with(|c| {
         let mut c = c.borrow_mut();
-        let entry = c.entry(name.to_string()).or_insert_with(|| {
-            let img = match bytes(name).or_else(|| crate::generated::catalog::png(name)) {
-                Some(b) => decode(b)?,
-                None => decode(&live_bytes(name)?)?,
-            };
-            Some(ctx.load_texture(name, img, TextureOptions::NEAREST))
-        });
-        entry.as_ref().map(|t| t.id())
+        if let Some(Some(t)) = c.get(name) {
+            return Some(t.id());
+        }
+        let img = match bytes(name).or_else(|| crate::generated::catalog::png(name)) {
+            Some(b) => decode(b)?,
+            None => decode(&live_bytes(name)?)?,
+        };
+        let t = ctx.load_texture(name, img, TextureOptions::NEAREST);
+        let id = t.id();
+        c.insert(name.to_string(), Some(t));
+        Some(id)
     })
 }
 

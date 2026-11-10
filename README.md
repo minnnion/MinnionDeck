@@ -13,7 +13,7 @@ Big square buttons for apps, keys, sounds, timers, weather, music and more, on y
 ![Phones](https://img.shields.io/badge/phones-Android%20%C2%B7%20iPhone-ffc93c)
 [![CI](https://github.com/minnnion/MinnionDeck/actions/workflows/ci.yml/badge.svg)](https://github.com/minnnion/MinnionDeck/actions/workflows/ci.yml)
 
-**[Download](https://github.com/minnnion/MinnionDeck/releases/latest)** · **[Website](https://minnnion.github.io)** · **[Features](#features)** · **[How it works](#how-it-works)** · **[Changelog](CHANGELOG.md)** · **[Privacy](PRIVACY.md)** · **[Terms](TERMS.md)**
+**[Download](https://github.com/minnnion/MinnionDeck/releases/latest)** · **[Website](https://minniondeck.github.io)** · **[Features](#features)** · **[How it works](#how-it-works)** · **[Changelog](CHANGELOG.md)** · **[Privacy](PRIVACY.md)** · **[Terms](TERMS.md)**
 
 <img src="docs/screenshots/deck.png" alt="MinnionDeck showing the Weather profile" width="880">
 
@@ -158,11 +158,11 @@ The source is here to read. MinnionDeck is meant to be installed with the offici
 - The app only contacts GitHub (updates, Marketplace); phones and the editor stay on your own network and PC.
 - Free to use from age 13; the source is to read, not to copy or redistribute.
 
-Short versions: [PRIVACY.md](PRIVACY.md) · [TERMS.md](TERMS.md) · [LICENSE](LICENSE). Security: [SECURITY.md](SECURITY.md). Want to help? [CONTRIBUTING.md](CONTRIBUTING.md). Full pages: [Privacy Policy](https://minnnion.github.io/privacy) · [Terms of Service](https://minnnion.github.io/terms). Contact: [minniondeck@gmail.com](mailto:minniondeck@gmail.com)
+Short versions: [PRIVACY.md](PRIVACY.md) · [TERMS.md](TERMS.md) · [LICENSE](LICENSE). Security: [SECURITY.md](SECURITY.md). Want to help? [CONTRIBUTING.md](CONTRIBUTING.md). Full pages: [Privacy Policy](https://minniondeck.github.io/privacy/) · [Terms of Service](https://minniondeck.github.io/terms/). Contact: [minniondeck@gmail.com](mailto:minniondeck@gmail.com)
 
 <div align="center">
 <br>
 <img src="docs/screenshots/deck-light.png" alt="MinnionDeck in the light theme, showing the System Monitor profile" width="720">
 <br><br>
-<sub>Made by <a href="https://github.com/minnnion">minnnion</a> · <a href="https://minnnion.github.io">minnnion.github.io</a></sub>
+<sub>Made by <a href="https://github.com/minnnion">minnnion</a> · <a href="https://minniondeck.github.io">minniondeck.github.io</a></sub>
 </div>

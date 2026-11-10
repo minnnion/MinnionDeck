@@ -33,7 +33,9 @@ use super::media::{self, Kind};
 const PORTS: std::ops::RangeInclusive<u16> = 51735..=51744;
 const MAX_BODY: usize = 25 * 1024 * 1024;
 /// Who may call it
-const SITE: &str = "https://minnnion.github.io";
+const SITE: &str = "https://minniondeck.github.io";
+/// Where the website was before (pages opened there still work)
+const OLD_SITE: &str = "https://minnnion.github.io";
 
 /// What the website sends back reaches the window as this: (kind, the new picture, Edit window token, look).
 pub type Done = (Kind, Result<serde_json::Value, String>, u64, usize);
@@ -251,7 +253,7 @@ fn read_request(stream: &mut TcpStream) -> Option<Request> {
 
 /// The website, or a page on this PC (for working on the website).
 fn allowed(origin: &str) -> bool {
-    origin == SITE || origin.starts_with("http://localhost:") || origin.starts_with("http://127.0.0.1:") || origin == "http://localhost" || origin == "http://127.0.0.1"
+    origin == SITE || origin == OLD_SITE || origin.starts_with("http://localhost:") || origin.starts_with("http://127.0.0.1:") || origin == "http://localhost" || origin == "http://127.0.0.1"
 }
 
 fn reply(stream: &mut TcpStream, status: &str, origin: Option<&str>, ctype: &str, body: &[u8]) -> std::io::Result<()> {

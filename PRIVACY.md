@@ -1,6 +1,6 @@
 # Privacy, in short
 
-The full policy is at **[minnnion.github.io/privacy](https://minnnion.github.io/privacy)**. The short version:
+The full policy is at **[minniondeck.github.io/privacy](https://minniondeck.github.io/privacy/)**. The short version:
 
 - **No account, no ads, no tracking.** MinnionDeck sends us no usage data.
 - **Your data stays on your PC.** Profiles, buttons, pictures and settings live in the folder you choose, encrypted with a key made for your install.

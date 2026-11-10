@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 use super::util::{now_ms, safe_name, sha256_hex};
 
 /// The Minniondeck website, where pictures and GIFs are made.
-pub const SITE: &str = "https://minnnion.github.io";
+pub const SITE: &str = "https://minniondeck.github.io";
 const MAX_MEDIA_BYTES: u64 = 25 * 1024 * 1024;
 
 #[derive(Clone, Debug)]

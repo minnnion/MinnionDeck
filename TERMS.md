@@ -1,6 +1,6 @@
 # Terms of Service, in short
 
-The full terms are at **[minnnion.github.io/terms](https://minnnion.github.io/terms)**. The short version:
+The full terms are at **[minniondeck.github.io/terms](https://minniondeck.github.io/terms/)**. The short version:
 
 - **Free to use** on your own devices, for anyone aged 13 or older.
 - **The source is here to read, not to reuse.** You may not copy, change, redistribute or sell MinnionDeck, or publish forks of it, unless a file says otherwise. Making your own plugins is welcome.

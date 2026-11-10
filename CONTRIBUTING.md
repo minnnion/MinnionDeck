@@ -7,7 +7,7 @@ app is free to use, but it isn't open for copies or forks (see [LICENSE](LICENSE
 ## Report a bug
 
 - Open an issue with the **Bug report** form, or use the form on the
-  [website](https://minnnion.github.io/#contribute), which can attach your log file.
+  [website](https://minniondeck.github.io/contribute/), which can attach your log file.
 - Say which version you have (Settings › Updates), what you did, what you expected and what happened.
 - The log is in `logs\` inside your MinnionDeck folder.
 
@@ -24,7 +24,7 @@ that helps more than how it should work.
 Plugins are welcome and are yours. They live in
 [Minnion-Plugins](https://github.com/minnnion/Minnion-Plugins), where you'll find the plugin kit
 and examples. When yours is ready, send it with **Submit a plugin** on the
-[Marketplace page](https://minnnion.github.io/#marketplace); approved plugins appear in the app's
+[Marketplace page](https://minniondeck.github.io/marketplace/); approved plugins appear in the app's
 Marketplace.
 
 ## Share profiles

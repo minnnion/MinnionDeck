@@ -13,7 +13,7 @@ Big square buttons for apps, keys, sounds, timers, weather, music and more, on y
 ![Phones](https://img.shields.io/badge/phones-Android%20%C2%B7%20iPhone-ffc93c)
 [![CI](https://github.com/minnnion/MinnionDeck/actions/workflows/ci.yml/badge.svg)](https://github.com/minnnion/MinnionDeck/actions/workflows/ci.yml)
 
-**[Download](https://github.com/minnnion/MinnionDeck/releases/latest)** · **[Website](https://minnnion.github.io)** · **[Features](#features)** · **[How it works](#how-it-works)** · **[Privacy](PRIVACY.md)** · **[Terms](TERMS.md)**
+**[Download](https://github.com/minnnion/MinnionDeck/releases/latest)** · **[Website](https://minnnion.github.io)** · **[Features](#features)** · **[How it works](#how-it-works)** · **[Changelog](CHANGELOG.md)** · **[Privacy](PRIVACY.md)** · **[Terms](TERMS.md)**
 
 <img src="docs/screenshots/deck.png" alt="MinnionDeck showing the Weather profile" width="880">
 

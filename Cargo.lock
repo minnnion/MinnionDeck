@@ -1402,7 +1402,7 @@ dependencies = [
 
 [[package]]
 name = "minniondeck-ui"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "aes-gcm",
  "base64",

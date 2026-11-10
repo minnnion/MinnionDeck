@@ -11,7 +11,6 @@ Big square buttons for apps, keys, sounds, timers, weather, music and more, on y
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-7cc4ff)
 ![Built with](https://img.shields.io/badge/built%20with-Rust%20%C2%B7%20egui-b79cff)
 ![Phones](https://img.shields.io/badge/phones-Android%20%C2%B7%20iPhone-ffc93c)
-[![CI](https://github.com/minnnion/MinnionDeck/actions/workflows/ci.yml/badge.svg)](https://github.com/minnnion/MinnionDeck/actions/workflows/ci.yml)
 
 **[Download](https://github.com/minnnion/MinnionDeck/releases/latest)** · **[Website](https://minniondeck.github.io)** · **[Features](#features)** · **[How it works](#how-it-works)** · **[Changelog](CHANGELOG.md)** · **[Privacy](PRIVACY.md)** · **[Terms](TERMS.md)**
 

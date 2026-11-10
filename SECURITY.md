@@ -29,5 +29,5 @@ The app tells you when a new one is out (Settings › Updates).
 - **Phones pair** with a 6-digit code you confirm on the PC, and each phone gets its own key. The
   phone page serves your Wi-Fi only; turn on **Secure phone link** (Settings › Phones) to use HTTPS.
 - **Imported buttons ask first** before they can press keys or open programs.
-- Every change is built and tested on GitHub, and the dependencies are checked for known advisories
-  every week.
+- Every release is tested before it goes out, and the libraries MinnionDeck uses are checked for
+  known security advisories.

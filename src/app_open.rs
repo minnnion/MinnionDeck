@@ -97,10 +97,12 @@ impl App {
             return;
         }
         ask.busy = true;
+        let (id, fresh) = (ask.info.id.clone(), ask.info.installed.is_none());
         let (path, tx, ctx) = (ask.path.clone(), self.io.tx.clone(), self.egui.clone());
         self.say("Installing…", now);
         std::thread::spawn(move || {
-            let _ = tx.send(crate::app_io::IoMsg::PluginInstalled(plugins::install_from_file(&path)));
+            let result = plugins::install_from_file(&path);
+            let _ = tx.send(crate::app_io::IoMsg::PluginInstalled { result, id, fresh, file: path });
             ctx.request_repaint();
         });
     }

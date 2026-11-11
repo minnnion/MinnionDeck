@@ -1303,7 +1303,8 @@ impl Library {
             .map(|a| {
                 a.iter()
                     .filter(|p| match p.get("from") {
-                        Some(f) => str_of(f, "plugin") == plugin,
+                        // one left behind when the plugin was removed waits for the next install
+                        Some(f) => str_of(f, "plugin") == plugin && !is_removed(f),
                         None => {
                             adopt
                                 && p.get("imported").and_then(|v| v.as_bool()).unwrap_or(false)
@@ -1425,6 +1426,61 @@ impl Library {
         }
     }
 
+    /// Which of plugin `plugin`'s choices were picked (None: nothing says, so show everything).
+    pub fn picked_choices(&self, plugin: &str) -> Option<Vec<String>> {
+        let mut all: Option<Vec<String>> = None;
+        for f in self.doc["profiles"].as_array().into_iter().flatten().filter_map(|p| p.get("from")).filter(|f| str_of(f, "plugin") == plugin && !is_removed(f)) {
+            for c in f.get("picked").and_then(|p| p.as_array()).into_iter().map(|p| p.iter().filter_map(|c| c.as_str())) {
+                let list = all.get_or_insert_with(Vec::new);
+                list.extend(c.map(String::from));
+            }
+        }
+        all
+    }
+
+    /// Plugin `plugin` was removed: a profile with picked choices waits, so installing it again
+    /// asks which ones instead of counting as an update.
+    pub fn mark_plugin_removed(&mut self, plugin: &str) {
+        for p in self.doc["profiles"].as_array_mut().into_iter().flatten() {
+            if let Some(f) = p.get_mut("from").filter(|f| str_of(f, "plugin") == plugin && f.get("picked").is_some()) {
+                f["removed"] = json!(true);
+                self.force = true;
+            }
+        }
+    }
+
+    /// Adds the pages picked from plugin `plugin`'s profile. An untouched profile left from before
+    /// the plugin was removed is replaced, so there's no second copy; one the user changed stays
+    /// as their own. Returns the profile's name.
+    pub fn add_chosen_profile(&mut self, s: &mut Sample, plugin: &str, sha: &str, picked: &[String], chosen: &Value) -> Result<String, String> {
+        self.store_pages(s);
+        let waiting: Vec<usize> = self.doc["profiles"].as_array().into_iter().flatten().enumerate().filter(|(_, p)| p.get("from").is_some_and(|f| str_of(f, "plugin") == plugin && is_removed(f))).map(|(i, _)| i).collect();
+        let mut reuse = None;
+        for i in waiting {
+            if reuse.is_none() && self.doc["profiles"][i].get("from").is_some_and(|f| str_of(f, "base") == self.profile_hash(i)) {
+                reuse = Some(str_of(&self.doc["profiles"][i], "id").to_string());
+            } else if let Some(p) = self.doc["profiles"][i].as_object_mut() {
+                p.remove("from");
+            }
+        }
+        let name = match reuse {
+            Some(id) => {
+                let name = self.replace_profile(s, &id, chosen, plugin, sha)?;
+                if let Some(i) = self.profile_index(&id) {
+                    self.doc["profiles"][i]["from"]["picked"] = json!(picked);
+                }
+                name
+            }
+            None => {
+                let (name, _, _) = self.import_bundle(s, chosen)?;
+                self.link_last_profile_picked(plugin, sha, Some(picked));
+                name
+            }
+        };
+        self.force = true;
+        Ok(name)
+    }
+
     /// Setup's starter profile after it installed or updated plugin `plugin`: the profiles that
     /// follow it are updated (see plugin_profile_changed); it is added only when none does.
     /// Returns what happened, in words.
@@ -1452,6 +1508,10 @@ impl Library {
             .collect();
         Ok(said.join(", "))
     }
+}
+
+fn is_removed(from: &Value) -> bool {
+    from.get("removed").and_then(|r| r.as_bool()).unwrap_or(false)
 }
 
 /// A profile's choices, when it has them: (id, label), from profile.choices
@@ -1751,6 +1811,43 @@ mod profile_files {
         lib.load_pages(&mut s, "");
         lib.store_pages(&mut s);
         assert_eq!(lib.profile_hash(1), base, "still untouched after the window saved it");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn removing_a_plugin_makes_the_next_install_ask_again() {
+        let dir = std::env::temp_dir().join(format!("md-lib-again-{}", now_ms()));
+        let paths = Paths { root: dir.clone(), library: dir.join("library"), media: dir.join("library").join("media"), backups: dir.join("backups") };
+        paths.make_folders().unwrap();
+        let mut lib = Library { paths, doc: default_doc(), loaded: String::new(), page_shown: 0, buttons: HashMap::new(), nodes: HashMap::new(), profiles_sig: 0, saved: 0, seen: 0, changed_at: 0.0, force: false, backed_up: true, auto_backup: true };
+        let mut s = Sample::empty();
+        s.profiles = lib.profiles();
+        lib.load_pages(&mut s, "");
+        let (obs, both) = (vec!["obs".to_string()], vec!["obs".to_string(), "twitch".to_string()]);
+
+        // first install: only OBS picked
+        lib.add_chosen_profile(&mut s, "minnion_spotify", "sha1", &obs, &plugin_bundle(&["Play"])).unwrap();
+        assert_eq!(lib.picked_choices("minnion_spotify"), Some(obs.clone()));
+        assert_eq!(lib.plugin_profiles("minnion_spotify", "Spotify", false).len(), 1, "an update finds it, so it doesn't ask");
+
+        // removed: nothing follows the plugin now, so the next install asks
+        lib.mark_plugin_removed("minnion_spotify");
+        assert!(lib.plugin_profiles("minnion_spotify", "Spotify", false).is_empty());
+        assert_eq!(lib.picked_choices("minnion_spotify"), None);
+
+        // installed again with other picks: the old copy is replaced, not doubled
+        lib.add_chosen_profile(&mut s, "minnion_spotify", "sha2", &both, &plugin_bundle(&["Play", "Next"])).unwrap();
+        assert_eq!(lib.doc["profiles"].as_array().unwrap().len(), 2);
+        assert_eq!(lib.picked_choices("minnion_spotify"), Some(both));
+        assert_eq!(lib.plugin_profiles("minnion_spotify", "Spotify", false).len(), 1);
+
+        // a profile the user changed is kept as theirs, and a new one is added
+        lib.mark_plugin_removed("minnion_spotify");
+        lib.doc["profiles"][1]["from"]["base"] = json!("someone-edited-it");
+        lib.add_chosen_profile(&mut s, "minnion_spotify", "sha3", &obs, &plugin_bundle(&["Play"])).unwrap();
+        assert_eq!(lib.doc["profiles"].as_array().unwrap().len(), 3);
+        assert!(lib.doc["profiles"][1].get("from").is_none());
+        assert_eq!(lib.picked_choices("minnion_spotify"), Some(obs));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

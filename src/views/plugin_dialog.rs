@@ -152,7 +152,13 @@ pub fn dialog(app: &mut App, ui: &mut Ui, win: Rect) {
     let icon = crate::backend::catalog::plugins().iter().find(|c| c.id == pd.id).map(|c| c.icon).unwrap_or("bolt");
     let colour = market.map(|m| m.colour).unwrap_or("mint");
     let settings: Vec<Value> = pd.fields.clone();
-    let visible: Vec<Value> = settings.iter().filter(|f| !f.get("hidden").and_then(|h| h.as_bool()).unwrap_or(false)).cloned().collect();
+    // a setting for a service the user didn't pick (its profile's choices) isn't shown
+    let picked = app.lib.picked_choices(&pd.id);
+    let wanted = |f: &Value| match (f.get("choice").and_then(|c| c.as_str()), &picked) {
+        (Some(c), Some(p)) => p.iter().any(|x| x == c),
+        _ => true,
+    };
+    let visible: Vec<Value> = settings.iter().filter(|f| !f.get("hidden").and_then(|h| h.as_bool()).unwrap_or(false) && wanted(f)).cloned().collect();
 
     // the height is what the last frame drew (the first frame guesses)
     let (dw, dh) = (600.0_f32, pd.height.clamp(200.0, win.height() - 50.0));
@@ -346,6 +352,7 @@ pub fn dialog(app: &mut App, ui: &mut Ui, win: Rect) {
             }
             if cv.button("pd-remove", x + w - 16.0 - rw + shake, ry + 10.0, rw, 40.0, rl, ro) {
                 if pd.remove_armed {
+                    app.lib.mark_plugin_removed(&pd.id);
                     let id = pd.id.clone();
                     std::thread::spawn(move || {
                         let _ = plugins::remove(&id);

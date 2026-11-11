@@ -3,6 +3,18 @@
 Every MinnionDeck release, newest first. Downloads are on the [Releases](https://github.com/minnnion/MinnionDeck/releases) page.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] - 2026-11-11
+
+### Added
+- **Choose pages on install.** Installing a plugin whose profile has choices (Streaming: OBS Studio, Twitch, YouTube) now asks which pages to add, from the Marketplace and from a plugin file with its `.mdprofile` beside it. A profile file imported by hand counts as that plugin's profile too, so its picks are remembered.
+
+### Changed
+- A plugin's settings for a service you didn't pick (for example YouTube's) are hidden. Plugins say which service a setting belongs to; settings that don't say are always shown.
+- Removing a plugin and installing it again asks again, and replaces the profile you hadn't changed instead of adding a second copy. A profile you changed is kept as yours.
+
+### Fixed
+- A button's icon went blank after **Edit image**, **Sync**, then **Save**. Sync now also sends the editable design, which is kept (sealed, per picture, and included in backups) beside the picture, so Edit image opens the icon and background as separate layers again. Buttons synced before this have no stored design and still open as one image.
+
 ## [0.2.0] - 2026-11-10
 
 ### Added

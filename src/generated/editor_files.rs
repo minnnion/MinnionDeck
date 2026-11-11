@@ -2,14 +2,14 @@
 //! The GIF maker and Images editor the app serves at http://127.0.0.1:<port>/editor/.
 
 pub static FILES: &[(&str, &[u8])] = &[
-    ("assets/editor-BlXAJ1Pi.js", include_bytes!("../../assets/editor/assets/editor-BlXAJ1Pi.js")),
+    ("assets/editor-YtRIWZkX.js", include_bytes!("../../assets/editor/assets/editor-YtRIWZkX.js")),
     ("assets/ibm-plex-mono-latin-400-normal-DMJ8VG8y.woff2", include_bytes!("../../assets/editor/assets/ibm-plex-mono-latin-400-normal-DMJ8VG8y.woff2")),
     ("assets/ibm-plex-mono-latin-600-normal-BgSNZQsw.woff2", include_bytes!("../../assets/editor/assets/ibm-plex-mono-latin-600-normal-BgSNZQsw.woff2")),
     ("assets/ibm-plex-mono-latin-ext-400-normal-BmRBH3aV.woff2", include_bytes!("../../assets/editor/assets/ibm-plex-mono-latin-ext-400-normal-BmRBH3aV.woff2")),
     ("assets/ibm-plex-mono-latin-ext-600-normal-D38SheWl.woff2", include_bytes!("../../assets/editor/assets/ibm-plex-mono-latin-ext-600-normal-D38SheWl.woff2")),
     ("assets/pixelify-sans-latin-ext-wght-normal-CsF3XSp0.woff2", include_bytes!("../../assets/editor/assets/pixelify-sans-latin-ext-wght-normal-CsF3XSp0.woff2")),
     ("assets/pixelify-sans-latin-wght-normal-Cbhn5ptY.woff2", include_bytes!("../../assets/editor/assets/pixelify-sans-latin-wght-normal-Cbhn5ptY.woff2")),
-    ("assets/style-se2VoSqV.css", include_bytes!("../../assets/editor/assets/style-se2VoSqV.css")),
+    ("assets/style-Ck95i1LZ.css", include_bytes!("../../assets/editor/assets/style-Ck95i1LZ.css")),
     ("icons/camera-save.png", include_bytes!("../../assets/editor/icons/camera-save.png")),
     ("icons/camera-toggle.png", include_bytes!("../../assets/editor/icons/camera-toggle.png")),
     ("icons/camera-view.png", include_bytes!("../../assets/editor/icons/camera-view.png")),

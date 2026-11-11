@@ -37,8 +37,9 @@ const SITE: &str = "https://minniondeck.github.io";
 /// Where the website was before (pages opened there still work)
 const OLD_SITE: &str = "https://minnnion.github.io";
 
-/// What the website sends back reaches the window as this: (kind, the new picture, Edit window token, look).
-pub type Done = (Kind, Result<serde_json::Value, String>, u64, usize);
+/// What the website sends back reaches the window as this: (kind, the new picture, Edit window token,
+/// look, whether the look's icon is inside the picture now).
+pub type Done = (Kind, Result<serde_json::Value, String>, u64, usize, bool);
 
 struct Session {
     key: String,
@@ -50,6 +51,10 @@ struct Session {
     current: Option<Vec<u8>>,
     /// The same in layers, bottom first
     layers: Vec<Layer>,
+    /// The design it was made from, when there is one: it opens as it was left
+    design: Option<Vec<u8>>,
+    /// The design of the picture on its way (POST /v1/design comes just before POST /v1/image)
+    incoming: Option<Vec<u8>>,
 }
 
 /// One layer of a look for the editor: its name, what it is ("background", "picture", "icon"), the
@@ -190,11 +195,11 @@ fn focus_browser() {}
 
 /// The website's address to edit look `look` of the Edit window `editor` with. `current` is the
 /// picture (or GIF) it has now.
-pub fn start(media_dir: &std::path::Path, tx: Sender<Done>, repaint: impl Fn() + Send + Sync + 'static, editor: u64, look: usize, kind: Kind, name: &str, current: Option<Vec<u8>>, layers: Vec<Layer>) -> Result<String, String> {
+pub fn start(media_dir: &std::path::Path, tx: Sender<Done>, repaint: impl Fn() + Send + Sync + 'static, editor: u64, look: usize, kind: Kind, name: &str, current: Option<Vec<u8>>, layers: Vec<Layer>, design: Option<Vec<u8>>) -> Result<String, String> {
     let port = ensure_server(media_dir, tx, Box::new(repaint))?;
     let key = new_key();
     let page = if kind == Kind::Gif { "gifs" } else { "images" };
-    *lock(&SESSION) = Some(Session { key: key.clone(), editor, look, kind, name: name.to_string(), current, layers });
+    *lock(&SESSION) = Some(Session { key: key.clone(), editor, look, kind, name: name.to_string(), current, layers, design, incoming: None });
     Ok(format!("http://127.0.0.1:{port}/editor/?token={key}#{page}"))
 }
 
@@ -346,9 +351,9 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {
     let key = token_of(&req.query);
     let session = {
         let s = lock(&SESSION);
-        s.as_ref().filter(|x| same_key(&x.key, &key)).map(|x| (x.editor, x.look, x.kind, x.name.clone(), x.current.clone(), x.layers.clone()))
+        s.as_ref().filter(|x| same_key(&x.key, &key)).map(|x| (x.editor, x.look, x.kind, x.name.clone(), x.current.clone(), x.layers.clone(), x.design.clone()))
     };
-    let Some((editor, look, kind, name, current, layers)) = session else {
+    let Some((editor, look, kind, name, current, layers, design)) = session else {
         return json_reply(&mut stream, "401 Unauthorized", o, json!({ "ok": false, "error": "This link has expired. Press Edit image in MinnionDeck again." }));
     };
     let word = if kind == Kind::Gif { "gif" } else { "image" };
@@ -357,7 +362,21 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {
             *lock(&ACKED) = Some(key.clone());
             json_reply(&mut stream, "200 OK", o, json!({ "ok": true }))
         }
-        ("GET", "/v1/session") => json_reply(&mut stream, "200 OK", o, json!({ "ok": true, "app": "MinnionDeck", "version": env!("CARGO_PKG_VERSION"), "kind": word, "has_image": current.is_some(), "layers": layers.len(), "name": name })),
+        ("GET", "/v1/session") => json_reply(&mut stream, "200 OK", o, json!({ "ok": true, "app": "MinnionDeck", "version": env!("CARGO_PKG_VERSION"), "kind": word, "has_image": current.is_some(), "layers": layers.len(), "design": design.is_some(), "name": name })),
+        ("GET", "/v1/design") => match design {
+            Some(bytes) => reply(&mut stream, "200 OK", o, "application/json", &bytes),
+            None => json_reply(&mut stream, "404 Not Found", o, json!({ "ok": false, "error": "This picture has no layers kept." })),
+        },
+        ("POST", "/v1/design") => {
+            let good = serde_json::from_slice::<serde_json::Value>(&req.body).is_ok_and(|v| v.get("layers").is_some_and(|l| l.is_array()));
+            if !good {
+                return json_reply(&mut stream, "400 Bad Request", o, json!({ "ok": false, "error": "That isn't a design." }));
+            }
+            if let Some(s) = lock(&SESSION).as_mut().filter(|x| x.key == key) {
+                s.incoming = Some(req.body.clone());
+            }
+            json_reply(&mut stream, "200 OK", o, json!({ "ok": true }))
+        }
         ("GET", "/v1/layers") => {
             use base64::Engine as _;
             let list: Vec<serde_json::Value> = layers.iter().map(|l| json!({ "name": l.name, "role": l.role, "icon": l.icon, "png": base64::engine::general_purpose::STANDARD.encode(&l.png) })).collect();
@@ -389,6 +408,12 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {
             };
             let label = if name.is_empty() { "From the website".to_string() } else { name.clone() };
             let r = media::import_bytes(&media_dir, &req.body, &label, as_kind);
+            // its design goes with this picture and no other, even if this one was refused
+            let incoming = lock(&SESSION).as_mut().filter(|x| x.key == key).and_then(|s| s.incoming.take()).filter(|_| as_kind == Kind::Picture);
+            // without it the picture still counts: it just opens flat next time
+            if let (Ok(entry), Some(d)) = (&r, &incoming) {
+                let _ = media::store_design(&media_dir, entry["media"].as_str().unwrap_or(""), d);
+            }
             let answer = match &r {
                 Ok(_) => json!({ "ok": true, "message": "Synced to MinnionDeck" }),
                 Err(e) => json!({ "ok": false, "error": e }),
@@ -397,9 +422,12 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {
                 // what it is now, for another round of editing
                 if let Some(s) = lock(&SESSION).as_mut().filter(|x| x.key == key) {
                     s.current = Some(req.body.clone());
+                    s.design = incoming;
                 }
             }
-            let _ = tx.send((as_kind, r, editor, look));
+            // only the page knows: it says so when this is the button's own layers, icon included
+            let icon_inside = as_kind == Kind::Picture && req.query.split('&').any(|kv| kv == "icon=inside") && layers.iter().any(|l| l.role == "icon");
+            let _ = tx.send((as_kind, r, editor, look, icon_inside));
             if let Some(srv) = lock(&SERVER).as_ref() {
                 (srv.repaint)();
             }
@@ -431,7 +459,7 @@ mod tests {
         let mut png = Vec::new();
         image::RgbaImage::from_pixel(4, 4, image::Rgba([255, 0, 0, 255])).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
         let layers = vec![Layer { name: "Button".into(), role: "background", icon: String::new(), png: png.clone() }, Layer { name: "Icon".into(), role: "icon", icon: "play".into(), png: png.clone() }];
-        let url = start(&dir, tx, || {}, 7, 1, Kind::Picture, "Mute", Some(png.clone()), layers).unwrap();
+        let url = start(&dir, tx, || {}, 7, 1, Kind::Picture, "Mute", Some(png.clone()), layers, None).unwrap();
         assert!(url.starts_with("http://127.0.0.1:") && url.contains("/editor/?token=") && url.ends_with("#images"), "{url}");
         let port: u16 = url.trim_start_matches("http://127.0.0.1:").split('/').next().unwrap().parse().unwrap();
         let key = url.split("token=").nth(1).unwrap().split('#').next().unwrap().to_string();
@@ -466,10 +494,35 @@ mod tests {
         image::RgbaImage::from_pixel(8, 8, image::Rgba([0, 255, 0, 255])).write_to(&mut std::io::Cursor::new(&mut green), image::ImageFormat::Png).unwrap();
         let post = http(port, &format!("POST /v1/image?token={key} HTTP/1.1\r\n{site}Content-Type: image/png\r\nContent-Length: {}\r\n\r\n", green.len()), &green);
         assert!(post.starts_with("HTTP/1.1 200") && post.contains("Synced"), "{post}");
-        let (kind, r, editor, look) = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let (kind, r, editor, look, icon_inside) = rx.recv_timeout(Duration::from_secs(2)).unwrap();
         assert!(kind == Kind::Picture && editor == 7 && look == 1);
+        assert!(!icon_inside, "a picture from anywhere else leaves the icon on the button");
         let entry = r.unwrap();
         assert!(media::file_for(&dir, entry["media"].as_str().unwrap()).is_some(), "kept, sealed, in the media folder");
+        // the button's own layers, synced: the page says its icon is in the picture
+        let post = http(port, &format!("POST /v1/image?token={key}&icon=inside HTTP/1.1\r\n{site}Content-Type: image/png\r\nContent-Length: {}\r\n\r\n", green.len()), &green);
+        assert!(post.starts_with("HTTP/1.1 200"), "{post}");
+        assert!(rx.recv_timeout(Duration::from_secs(2)).unwrap().4, "the icon is inside");
+        // a picture with no design sent has none kept
+        assert!(media::design_for(&media::file_for(&dir, entry["media"].as_str().unwrap()).unwrap()).is_none());
+        assert!(http(port, &format!("GET /v1/design?token={key} HTTP/1.1\r\n{site}\r\n"), b"").starts_with("HTTP/1.1 404"));
+        // the design comes just before its picture, is kept beside it, and opens again
+        assert!(http(port, &format!("POST /v1/design?token={key} HTTP/1.1\r\n{site}Content-Length: 5\r\n\r\n"), b"hello").starts_with("HTTP/1.1 400"));
+        let design = br#"{"id":"d1","layers":[{"type":"icon","from":"play"}]}"#;
+        assert!(http(port, &format!("POST /v1/design?token={key} HTTP/1.1\r\n{site}Content-Length: {}\r\n\r\n", design.len()), design).starts_with("HTTP/1.1 200"));
+        http(port, &format!("POST /v1/image?token={key}&icon=inside HTTP/1.1\r\n{site}Content-Type: image/png\r\nContent-Length: {}\r\n\r\n", green.len()), &green);
+        let with_design = rx.recv_timeout(Duration::from_secs(2)).unwrap().1.unwrap();
+        let file = media::file_for(&dir, with_design["media"].as_str().unwrap()).unwrap();
+        assert_eq!(media::design_for(&file).unwrap(), design);
+        assert!(http(port, &format!("GET /v1/session?token={key} HTTP/1.1\r\n{site}\r\n"), b"").contains("\"design\":true"));
+        assert!(http(port, &format!("GET /v1/design?token={key} HTTP/1.1\r\n{site}\r\n"), b"").contains("\"from\":\"play\""));
+        // a design whose picture was refused doesn't stick to the next picture
+        http(port, &format!("POST /v1/design?token={key} HTTP/1.1\r\n{site}Content-Length: {}\r\n\r\n", design.len()), design);
+        assert!(http(port, &format!("POST /v1/image?token={key} HTTP/1.1\r\n{site}Content-Length: 5\r\n\r\n"), b"hello").starts_with("HTTP/1.1 422"));
+        let _ = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        http(port, &format!("POST /v1/image?token={key} HTTP/1.1\r\n{site}Content-Type: image/png\r\nContent-Length: {}\r\n\r\n", green.len()), &green);
+        let flat = rx.recv_timeout(Duration::from_secs(2)).unwrap().1.unwrap();
+        assert!(media::design_for(&media::file_for(&dir, flat["media"].as_str().unwrap()).unwrap()).is_none());
         // something that isn't a picture is refused
         assert!(http(port, &format!("POST /v1/image?token={key} HTTP/1.1\r\n{site}Content-Length: 5\r\n\r\n"), b"hello").starts_with("HTTP/1.1 422"));
         // the site finds the app, and an open tab listening gets Edit image instead of a new tab

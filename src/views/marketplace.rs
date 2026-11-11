@@ -154,7 +154,10 @@ fn tick(app: &mut App, now: f64, ctx: &egui::Context) {
                         app.say(&format!("{} updated to {}", p.name, done.version), now);
                         app.profile_sync(p.id, true, true);
                     }
-                    None => app.say(&format!("{} installed. Its buttons are in Edit button.", p.name), now),
+                    None => {
+                        app.say(&format!("{} installed. Its buttons are in Edit button.", p.name), now);
+                        app.offer_plugin_profile(p.id, p.name, None);
+                    }
                 },
                 Err(e) => app.say(&format!("Could not install {}: {e}", p.name), now),
             }
@@ -538,6 +541,7 @@ fn installed_tab(app: &mut App, cv: &mut Cv, x: f32, y: f32, cw: f32, now: f64) 
         if cv.button(&format!("mrm{i}"), right - 86.0, ry + 21.0, 86.0, 38.0, if confirm { "Sure?" } else { "Remove" }, ro) {
             if confirm {
                 if app.plug.running() {
+                    app.lib.mark_plugin_removed(p.id);
                     let (id, tx, ctx) = (p.id.to_string(), app.ran_tx.clone(), app.egui.clone());
                     std::thread::spawn(move || {
                         if let Err(e) = crate::backend::plugins::remove(&id) {

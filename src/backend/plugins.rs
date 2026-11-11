@@ -1069,6 +1069,23 @@ pub fn inspect(file: &Path) -> Result<PackInfo, String> {
 }
 
 /// Installs a .mdplugin (replacing an older copy) and starts it. Returns its name. Blocks.
+/// The .mdprofile beside a plugin file that belongs to plugin `name` and has choices: the
+/// profile, and its file's SHA-256.
+pub fn profile_beside(media: &Path, file: &Path, name: &str) -> Option<(Value, String)> {
+    for e in fs::read_dir(file.parent()?).ok()?.flatten() {
+        let path = e.path();
+        if !path.extension().is_some_and(|x| x.eq_ignore_ascii_case("mdprofile")) {
+            continue;
+        }
+        let Ok(bundle) = super::profile_io::import_from(media, &path) else { continue };
+        let ours = bundle["plugins"].as_array().is_some_and(|p| p.iter().any(|n| n.as_str() == Some(name)));
+        if ours && !super::library::choices_of(&bundle).is_empty() {
+            return Some((bundle, util::sha256_hex(&fs::read(&path).ok()?)));
+        }
+    }
+    None
+}
+
 pub fn install_from_file(file: &Path) -> Result<String, String> {
     let root = sup()?.root.clone();
     let (m, _, _) = install_file(&root, file)?;

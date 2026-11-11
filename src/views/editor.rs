@@ -407,21 +407,25 @@ pub fn draw(app: &mut App, ui: &mut Ui, win: Rect) {
     app.editor = Some(ed);
 }
 
+/// What the window holds, onto the button.
+fn apply_draft(ed: &Editor, t: &mut Tile) {
+    t.label = ed.name.trim().to_string();
+    let first = &ed.looks[0];
+    let (icon, image) = if first.icon.contains(':') { ("bolt".to_string(), first.icon.clone()) } else { (first.icon.clone(), String::new()) };
+    t.icon = icon;
+    t.image = image;
+    t.colour = first.colour.clone();
+    t.media = first.media.clone();
+    t.first_name = first.name.clone();
+    t.more = ed.looks[1..].iter().map(|l| crate::backend::model::Look { name: l.name.clone(), label: l.text.clone(), icon: l.icon.clone(), colour: l.colour.clone(), media: l.media.clone() }).collect();
+    t.cur = 0;
+    t.anim = ed.anim;
+    t.action = ed.action.clone();
+    t.values = ed.values.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+}
+
 fn save_tile(app: &mut App, ed: &Editor, now: f64) {
-    let apply = |t: &mut Tile| {
-        t.label = ed.name.trim().to_string();
-        let first = &ed.looks[0];
-        let (icon, image) = if first.icon.contains(':') { ("bolt".to_string(), first.icon.clone()) } else { (first.icon.clone(), String::new()) };
-        t.icon = icon;
-        t.image = image;
-        t.colour = first.colour.clone();
-        t.first_name = first.name.clone();
-        t.more = ed.looks[1..].iter().map(|l| crate::backend::model::Look { name: l.name.clone(), label: l.text.clone(), icon: l.icon.clone(), colour: l.colour.clone(), media: l.media.clone() }).collect();
-        t.cur = 0;
-        t.anim = ed.anim;
-        t.action = ed.action.clone();
-        t.values = ed.values.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-    };
+    let apply = |t: &mut Tile| apply_draft(ed, t);
     match (ed.index, ed.cell) {
         (Some(i), _) if i < app.sample.tiles.len() => {
             apply(&mut app.sample.tiles[i]);
@@ -1186,4 +1190,37 @@ fn looks_strip(cv: &mut Cv, ed: &mut Editor, x: f32, y0: f32, w: f32, now: f64) 
         y += 18.0;
     }
     y - y0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Sync puts the edited picture on the look and takes the icon off it, as the icon is inside
+    // the picture now: saving has to keep the picture, or the button ends up with neither
+    #[test]
+    fn saving_keeps_the_first_looks_picture_from_sync() {
+        let mut tile = Tile::new(0, 0, 0);
+        tile.icon = "play".into();
+        let mut ed = Editor::new(Some(&tile), Some(0), None);
+        ed.looks[0].media.pic = "u:5".into();
+        ed.looks[0].media.gif = "g:2".into();
+        ed.looks[0].icon = "none".into();
+        apply_draft(&ed, &mut tile);
+        assert_eq!(tile.media.pic, "u:5");
+        assert_eq!(tile.media.gif, "g:2");
+        assert_eq!(tile.icon, "none");
+    }
+
+    // nothing came back from the website: the button stays as it was
+    #[test]
+    fn saving_without_a_sync_keeps_the_icon_and_picture() {
+        let mut tile = Tile::new(0, 0, 0);
+        tile.icon = "play".into();
+        tile.media.pic = "u:1".into();
+        let ed = Editor::new(Some(&tile), Some(0), None);
+        apply_draft(&ed, &mut tile);
+        assert_eq!(tile.icon, "play");
+        assert_eq!(tile.media.pic, "u:1");
+    }
 }

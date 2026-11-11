@@ -121,6 +121,24 @@ pub fn store(media_dir: &Path, name: &str, bytes: &[u8]) -> Result<(), String> {
     super::vault::write(&media_dir.join(format!("{name}.{}", super::vault::MEDIA_EXT)), super::package::Kind::Media, bytes)
 }
 
+/// The name of the editable design kept beside the picture `name`.
+fn design_name(name: &str) -> String {
+    format!("{name}.design.json")
+}
+
+/// Keeps the design (its layers, as the editor has them) a picture was made from, so the picture
+/// can be edited in layers again.
+pub fn store_design(media_dir: &Path, name: &str, design: &[u8]) -> Result<(), String> {
+    store(media_dir, &design_name(name), design)
+}
+
+/// The design kept beside this picture file, if it was made from one.
+pub fn design_for(picture: &Path) -> Option<Vec<u8>> {
+    let file = picture.file_name()?.to_str()?;
+    let name = file.strip_suffix(&format!(".{}", super::vault::MEDIA_EXT)).unwrap_or(file);
+    read_named(picture.parent()?, &design_name(name))
+}
+
 /// Every picture and GIF there is as (its name, its bytes), for a backup.
 pub fn all_files(media_dir: &Path) -> Result<Vec<(String, Vec<u8>)>, String> {
     let mut out = vec![];

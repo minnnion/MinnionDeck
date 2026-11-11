@@ -121,14 +121,22 @@ pub fn dialog(app: &mut App, ui: &mut Ui, win: Rect) {
     if add && ask.closing.is_none() {
         let picked: Vec<String> = ask.choices.iter().zip(&ask.ticks).filter(|(_, t)| **t).map(|(c, _)| c.0.clone()).collect();
         let chosen = crate::backend::library::with_choices(&ask.bundle, &picked);
-        match app.lib.import_bundle(&mut app.sample, &chosen) {
-            Ok((name, pages, buttons)) => {
-                if let Some((plugin, sha)) = &ask.plugin {
-                    app.lib.link_last_profile_picked(plugin, sha, Some(&picked));
-                }
-                app.fresh_profile = Some((app.sample.profiles.len().saturating_sub(1), now));
+        // a profile file imported by hand belongs to its one plugin too, so its picks count
+        let owner = ask.plugin.clone().or_else(|| {
+            let names = ask.bundle["plugins"].as_array().filter(|n| n.len() == 1)?;
+            let name = names[0].as_str()?;
+            app.plug.rows.iter().find(|r| r.name == name).map(|r| (r.id.clone(), String::new()))
+        });
+        let done = match &owner {
+            Some((plugin, sha)) => app.lib.add_chosen_profile(&mut app.sample, plugin, sha, &picked, &chosen),
+            None => app.lib.import_bundle(&mut app.sample, &chosen).map(|(name, _, _)| name),
+        };
+        match done {
+            Ok(name) => {
+                let at = app.sample.profiles.iter().position(|p| p.name == name).unwrap_or(app.sample.profiles.len().saturating_sub(1));
+                app.fresh_profile = Some((at, now));
                 app.pending_view = Some(View::Profiles);
-                app.say(&format!("Added {name}: {pages} {}, {buttons} {}", if pages == 1 { "page" } else { "pages" }, if buttons == 1 { "button" } else { "buttons" }), now);
+                app.say(&format!("Added {name}"), now);
             }
             Err(e) => app.say(&format!("Could not add it: {e}"), now),
         }

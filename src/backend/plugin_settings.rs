@@ -59,6 +59,9 @@ pub struct Field {
     /// A password only the plugin sets (see the top of this file)
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hidden: bool,
+    /// Which of the plugin profile's choices this belongs to ("youtube"): shown only if picked
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub choice: String,
 }
 fn text_kind() -> String {
     "text".into()

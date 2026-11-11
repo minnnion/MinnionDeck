@@ -19,7 +19,10 @@ pub enum IoMsg {
     /// A plugin file was looked into: the path and what it is
     PluginInspected(Result<(std::path::PathBuf, crate::backend::plugins::PackInfo), String>),
     /// A plugin file was installed: its name
-    PluginInstalled(Result<String, String>),
+    PluginInstalled { result: Result<String, String>, id: String, fresh: bool, file: std::path::PathBuf },
+    /// A plugin was installed for the first time (or again after being removed): if its profile
+    /// has choices, ask which pages to add
+    PluginProfileOffer { plugin: String, result: Result<(Value, String), String> },
     /// An author's key was trusted: their name
     AuthorAdded(Result<String, String>),
     /// Plugin `plugin`'s ready-made profile was downloaded: the profile, its file's SHA-256 and
@@ -27,7 +30,7 @@ pub enum IoMsg {
     /// against the profiles that follow the plugin (`adopt`: also ones added before they were linked).
     PluginProfile { plugin: String, add: bool, adopt: bool, result: Result<(Value, String, String), String> },
     /// A picture or GIF copied into library\media: its kind, its entry, and the editor and look it is for
-    MediaImported(crate::backend::media::Kind, Result<serde_json::Value, String>, u64, usize),
+    MediaImported(crate::backend::media::Kind, Result<serde_json::Value, String>, u64, usize, bool),
 }
 
 pub struct Io {
@@ -117,6 +120,31 @@ impl App {
         self.fetch_plugin_profile(id, true, false);
     }
 
+    /// A plugin was just installed fresh: asks which pages of its profile to add, when the
+    /// profile has choices. `file`: the plugin file it came from, whose folder may hold the profile.
+    pub fn offer_plugin_profile(&mut self, id: &str, name: &str, file: Option<std::path::PathBuf>) {
+        if !self.tray.on() {
+            return;
+        }
+        if !self.lib.plugin_profiles(id, name, false).is_empty() {
+            return self.profile_sync(id, false, true);
+        }
+        let (tx, root, media, ctx, id, name) = (self.io.tx.clone(), self.lib.paths.root.clone(), self.lib.paths.media.clone(), self.egui.clone(), id.to_string(), name.to_string());
+        std::thread::spawn(move || {
+            let beside = file.and_then(|f| crate::backend::plugins::profile_beside(&media, &f, &name));
+            let result = match beside {
+                Some(found) => Ok(found),
+                None => crate::backend::market::download_plugin_profile(&root, &id).and_then(|d| {
+                    let out = profile_io::import_from(&media, &d.path);
+                    let _ = std::fs::remove_file(&d.path);
+                    out.map(|b| (b, d.sha))
+                }),
+            };
+            let _ = tx.send(IoMsg::PluginProfileOffer { plugin: id, result });
+            ctx.request_repaint();
+        });
+    }
+
     fn fetch_plugin_profile(&mut self, id: &str, add: bool, adopt: bool) {
         let (tx, root, media, ctx, id) = (self.io.tx.clone(), self.lib.paths.root.clone(), self.lib.paths.media.clone(), self.egui.clone(), id.to_string());
         std::thread::spawn(move || {
@@ -173,8 +201,8 @@ impl App {
         let (tx, rx) = std::sync::mpsc::channel::<crate::backend::websync::Done>();
         let (out, ctx) = (self.io.tx.clone(), self.egui.clone());
         std::thread::spawn(move || {
-            while let Ok((k, r, t, look)) = rx.recv() {
-                let _ = out.send(IoMsg::MediaImported(k, r, t, look));
+            while let Ok((k, r, t, look, icon_inside)) = rx.recv() {
+                let _ = out.send(IoMsg::MediaImported(k, r, t, look, icon_inside));
                 ctx.request_repaint();
             }
         });
@@ -190,7 +218,6 @@ impl App {
         use crate::backend::media::{self, Kind};
         // a GIF look edits its GIF; anything else edits its picture. A look with no picture file sends
         // what it looks like (its colour and icon), so there is always something to start from.
-        let mut baked = false;
         let gif_look = match want {
             Some(k) => k == Kind::Gif,
             None => !l.media.gif.is_empty() && l.media.pic.is_empty(),
@@ -204,29 +231,23 @@ impl App {
             (Kind::Gif, bytes)
         } else {
             let file = media::picture(&l.media.pic).and_then(|p| p.file).and_then(|f| media::read_bytes(&f));
-            let bytes = file.or_else(|| {
-                baked = true;
-                look_png(&self.theme(), &l.colour, &l.icon)
-            });
+            let bytes = file.or_else(|| look_png(&self.theme(), &l.colour, &l.icon));
             (Kind::Picture, bytes)
         };
-        *lock_baked() = if baked { Some((token, look)) } else { None };
         let (tx, rx) = std::sync::mpsc::channel::<crate::backend::websync::Done>();
         let (out, ctx) = (self.io.tx.clone(), self.egui.clone());
         std::thread::spawn(move || {
-            while let Ok((k, r, t, look)) = rx.recv() {
-                let _ = out.send(IoMsg::MediaImported(k, r, t, look));
+            while let Ok((k, r, t, look, icon_inside)) = rx.recv() {
+                let _ = out.send(IoMsg::MediaImported(k, r, t, look, icon_inside));
                 ctx.request_repaint();
             }
         });
         let c = self.egui.clone();
         // a picture look also goes in layers: the button, then its icon on its own layer
         let layers = if kind == Kind::Picture { look_layers(&self.theme(), &l.colour, &l.icon, media::picture(&l.media.pic).and_then(|p| p.file).and_then(|f| media::read_bytes(&f))) } else { vec![] };
-        if layers.iter().any(|x| x.role == "icon") {
-            // the icon comes back inside the picture: the button mustn't draw it a second time
-            *lock_baked() = Some((token, look));
-        }
-        match crate::backend::websync::start(&self.lib.paths.media, tx, move || c.request_repaint(), token, look, kind, &name, current, layers) {
+        // a picture made in layers opens in them again, unless an icon has been put on top since
+        let design = if kind == Kind::Picture && (l.icon.is_empty() || l.icon == "none") { media::picture(&l.media.pic).and_then(|p| p.file).and_then(|f| media::design_for(&f)) } else { None };
+        match crate::backend::websync::start(&self.lib.paths.media, tx, move || c.request_repaint(), token, look, kind, &name, current, layers, design) {
             Ok(url) => {
                 self.say("Opening the editor in your browser. Press Sync there when it's done.", now);
                 // an editor tab that is open takes it; otherwise a new tab
@@ -250,7 +271,7 @@ impl App {
                 Kind::Gif => dialogs::open_file("Import a GIF", "GIF files", "gif"),
             };
             if let Some(path) = picked {
-                let _ = tx.send(IoMsg::MediaImported(kind, crate::backend::media::import(&media, &path, kind), token, look));
+                let _ = tx.send(IoMsg::MediaImported(kind, crate::backend::media::import(&media, &path, kind), token, look, false));
                 ctx.request_repaint();
             }
         });
@@ -364,20 +385,14 @@ impl App {
                     self.say("Backup restored. What was here before was backed up first", now);
                 }
                 IoMsg::Restored(Err(e)) => self.say(&format!("Could not restore: {e}"), now),
-                IoMsg::MediaImported(kind, Ok(entry), token, look) => {
+                IoMsg::MediaImported(kind, Ok(entry), token, look, icon_inside) => {
                     let name = entry.get("name").and_then(|n| n.as_str()).unwrap_or("It").to_string();
                     let id = self.lib.add_media(kind, entry);
                     // onto the look it was imported for, if that Edit window is still open
                     match self.editor.as_mut().filter(|e| e.token == token) {
                         Some(ed) => {
                             if let Some(l) = ed.looks.get_mut(look) {
-                                match kind {
-                                    crate::backend::media::Kind::Picture => l.media.pic = id,
-                                    crate::backend::media::Kind::Gif => l.media.gif = id,
-                                }
-                                if kind == crate::backend::media::Kind::Picture && *lock_baked() == Some((token, look)) {
-                                    l.icon = "none".into();
-                                }
+                                put_on_look(l, kind, id, icon_inside);
                             }
                             ed.bump = Some(now);
                             ed.state_at = Some(now);
@@ -386,18 +401,27 @@ impl App {
                         None => self.say(&format!("{name} added"), now),
                     }
                 }
-                IoMsg::MediaImported(_, Err(e), _, _) => self.say(&format!("Could not import it: {e}"), now),
+                IoMsg::MediaImported(_, Err(e), _, _, _) => self.say(&format!("Could not import it: {e}"), now),
                 IoMsg::PluginInspected(Ok((path, info))) => {
                     self.install_ask = Some(crate::app_open::InstallAsk { path, info, opened: None, closing: None, busy: false });
                 }
                 IoMsg::PluginInspected(Err(e)) => self.say(&format!("Could not open that plugin: {e}"), now),
-                IoMsg::PluginInstalled(r) => {
+                IoMsg::PluginInstalled { result, id, fresh, file } => {
                     self.install_ask = None;
-                    match r {
-                        Ok(name) => self.say(&format!("{name} installed. Its buttons are in Edit button."), now),
+                    match result {
+                        Ok(name) => {
+                            self.say(&format!("{name} installed. Its buttons are in Edit button."), now);
+                            if fresh {
+                                self.offer_plugin_profile(&id, &name, Some(file));
+                            }
+                        }
                         Err(e) => self.say(&format!("Could not install it: {e}"), now),
                     }
                 }
+                IoMsg::PluginProfileOffer { plugin, result: Ok((bundle, sha)) } if !crate::backend::library::choices_of(&bundle).is_empty() => {
+                    self.choose_pages = Some(crate::views::choose_pages::ChoosePages::new(bundle, Some((plugin, sha))));
+                }
+                IoMsg::PluginProfileOffer { .. } => {}
                 IoMsg::AuthorAdded(Ok(name)) => self.say(&format!("{name} is trusted now. Their plugins can run."), now),
                 IoMsg::AuthorAdded(Err(e)) => self.say(&format!("Could not add that author: {e}"), now),
                 IoMsg::MarketRefreshed(r, by_hand) => {
@@ -419,11 +443,17 @@ impl App {
     }
 }
 
-/// The Edit window and look whose picture was made from its colour and icon (for Edit image).
-static WEB_BAKED: std::sync::Mutex<Option<(u64, usize)>> = std::sync::Mutex::new(None);
-
-fn lock_baked() -> std::sync::MutexGuard<'static, Option<(u64, usize)>> {
-    WEB_BAKED.lock().unwrap_or_else(|e| e.into_inner())
+/// A new picture or GIF onto a look. The icon goes only when it is inside the picture now, so the
+/// button doesn't draw it a second time; any other picture sits behind the icon.
+fn put_on_look(l: &mut crate::views::editor::LookDraft, kind: crate::backend::media::Kind, id: String, icon_inside: bool) {
+    use crate::backend::media::Kind;
+    match kind {
+        Kind::Picture => l.media.pic = id,
+        Kind::Gif => l.media.gif = id,
+    }
+    if kind == Kind::Picture && icon_inside {
+        l.icon = "none".into();
+    }
 }
 
 /// A look as the deck shows it, without its name: its colour, and its icon in the middle. 256 x 256.
@@ -522,6 +552,24 @@ fn drawn_gif(size: usize, fps: f32, frames: &[Vec<Option<[u8; 4]>>]) -> Option<V
 #[cfg(test)]
 mod web_edit_tests {
     use super::*;
+
+    #[test]
+    fn the_icon_goes_only_when_it_is_inside_the_picture() {
+        use crate::backend::media::Kind;
+        let look = || crate::views::editor::LookDraft { name: "Default".into(), text: String::new(), icon: "play".into(), colour: "sky".into(), media: Default::default() };
+        // Import, the Pixel picture tab or another design: a picture without the icon
+        let mut l = look();
+        put_on_look(&mut l, Kind::Picture, "u:1".into(), false);
+        assert_eq!((l.media.pic.as_str(), l.icon.as_str()), ("u:1", "play"));
+        // the button's own layers
+        let mut l = look();
+        put_on_look(&mut l, Kind::Picture, "u:2".into(), true);
+        assert_eq!((l.media.pic.as_str(), l.icon.as_str()), ("u:2", "none"));
+        // a GIF never takes the icon
+        let mut l = look();
+        put_on_look(&mut l, Kind::Gif, "g:1".into(), true);
+        assert_eq!((l.media.gif.as_str(), l.icon.as_str()), ("g:1", "play"));
+    }
 
     #[test]
     fn a_look_without_a_picture_is_sent_as_it_looks() {

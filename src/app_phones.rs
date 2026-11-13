@@ -56,12 +56,6 @@ impl PhoneGlue {
     }
 }
 
-/// "Allow the plain http page" for an install that hasn't said: on only when phones are already
-/// paired (they may have been paired over http, and would otherwise have to be paired again).
-fn plain_default(has_phones: bool) -> usize {
-    has_phones as usize
-}
-
 fn hex(c: egui::Color32) -> String {
     format!("#{:02x}{:02x}{:02x}", c.r(), c.g(), c.b())
 }
@@ -78,16 +72,11 @@ fn ago(ms: u64) -> String {
 }
 
 impl App {
-    /// Once, when the settings have been read: whether the plain http page is allowed. An install
-    /// that never said (it comes from before 0.2.2) keeps it when phones are already paired, so
-    /// they go on working; a new install starts with HTTPS only. The answer is saved.
+    /// Once, when the settings have been read: which page the QR opens (Settings › Phones ›
+    /// Secure phone link: the HTTPS page; off, the default: the plain page's encrypted link).
     pub fn init_phone_link(&mut self) {
         let Some(hub) = self.phones.hub.clone() else { return };
-        if !self.st.contains_key("plain") {
-            self.st.insert("plain", plain_default(!hub.phones().is_empty()));
-        }
-        hub.secure_link.store(self.st.get("secure").is_none_or(|v| *v == 1), std::sync::atomic::Ordering::Relaxed);
-        hub.plain_ok.store(self.st.get("plain").is_some_and(|v| *v == 1), std::sync::atomic::Ordering::Relaxed);
+        hub.secure_link.store(self.st.get("secure").is_some_and(|v| *v == 1), std::sync::atomic::Ordering::Relaxed);
     }
 
     /// A hash of everything the phone deck is made from: the pages and buttons (with what plugins
@@ -169,8 +158,7 @@ impl App {
     pub fn pump_phones(&mut self, now: f64) {
         let Some(hub) = self.phones.hub.clone() else { return };
         hub.require_match.store(self.st.get("match").map(|v| *v == 1).unwrap_or(true), std::sync::atomic::Ordering::Relaxed);
-        hub.secure_link.store(self.st.get("secure").is_none_or(|v| *v == 1), std::sync::atomic::Ordering::Relaxed);
-        hub.plain_ok.store(self.st.get("plain").is_some_and(|v| *v == 1), std::sync::atomic::Ordering::Relaxed);
+        hub.secure_link.store(self.st.get("secure").is_some_and(|v| *v == 1), std::sync::atomic::Ordering::Relaxed);
         let mut events = vec![];
         if let Some(rx) = &self.phones.rx {
             while let Ok(e) = rx.try_recv() {

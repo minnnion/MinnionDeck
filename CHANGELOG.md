@@ -6,11 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 ## [0.2.2] - 2026-11-13
 
 ### Added
-- **One-time phone setup, no certificate warning:** the PC makes its own certificate authority for the phone page, limited to home-network addresses. The QR code opens a setup page that checks whether the phone trusts it and, if not, shows how to install it once; then the deck opens over HTTPS with no warning, also from the Home Screen and after the PC's address changes.
+- **Encrypted phone link, no warning:** the plain phone page encrypts everything it exchanges with the PC (ChaCha20 with HMAC-SHA256). The key rides in the QR code after the `#`, which is never sent; a paired phone uses its own stored key; each connection gets fresh keys and replays are refused.
+- **Secure phone link** (off by default) opens the HTTPS page instead, after a one-time setup that installs the PC's own certificate (limited to home-network addresses) on the phone.
 - **Password backups** (Settings › Backup › Move to another PC): a backup locked with a password you choose, which opens on another PC or after Windows is installed again. Ordinary backups still open only on the Windows account that made them.
 
 ### Changed
-- **Phones connect over HTTPS by default.** The QR code opens the HTTPS page; the phone warns about the certificate once. Phones you paired before keep working: "Allow the plain http page" (Settings › Phones) is switched on for installs that already had phones paired.
+- Phones paired over http before keep working and switch to the encrypted link by themselves; phones paired on the HTTPS page pair once more.
 - "Allow imported buttons?" now lists what the buttons will do.
 - The plugin install question shows the signing key's fingerprint and warns before putting an older version over a newer one. Turning on Developer mode asks first.
 - The installer's helpers hand their work to MinnionDeck when it is running.

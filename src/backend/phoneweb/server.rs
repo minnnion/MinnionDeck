@@ -362,23 +362,13 @@ fn handle_plain(hub: Arc<Hub>, tcp: TcpStream, peer: IpAddr) -> Option<()> {
         return None;
     }
     let head = read_head(&mut s)?;
-    // the plain page only when it is allowed: otherwise codes and keys would cross the Wi-Fi readable
-    if !hub.plain_served() {
-        // only the start page and what it needs (nothing about your deck): the rest goes to https
-        match head.path.as_str() {
-            _ if wants_websocket(&head) => {}
-            "/" | "/index.html" | "/start" => respond(&mut s, &head, "200 OK", "text/html; charset=utf-8", START.as_bytes(), "no-cache"),
-            "/cert-info" | "/minniondeck.cer" | "/font-400.ttf" | "/font-700.ttf" | "/app-icon-192.png" => route(&hub, &head, &mut s),
-            _ => redirect_to_https(&hub, &head, &mut s),
-        }
-        return Some(());
-    }
+    // the page's WebSocket here is the encrypted link (link.rs): nothing readable crosses the Wi-Fi
     if wants_websocket(&head) {
         if !same_origin(&head) {
             return None;
         }
         let replay = Replay { buf: head.raw, pos: 0, inner: s };
-        return websocket(hub, replay, peer);
+        return websocket(hub, replay, peer, true);
     }
     route(&hub, &head, &mut s);
     let _ = s.flush();
@@ -405,7 +395,7 @@ fn handle(hub: Arc<Hub>, tls: Arc<ServerConfig>, tcp: TcpStream, peer: IpAddr) -
             return None;
         }
         let replay = Replay { buf: head.raw, pos: 0, inner: s };
-        return websocket(hub, replay, peer);
+        return websocket(hub, replay, peer, false);
     }
     route(&hub, &head, &mut s);
     s.conn.send_close_notify();
@@ -486,16 +476,60 @@ fn route(hub: &Hub, h: &Head, s: &mut impl Write) {
     }
 }
 
-fn send<S: Read + Write>(ws: &mut tungstenite::WebSocket<S>, v: Value) -> bool {
-    ws.send(Message::text(v.to_string())).is_ok()
+/// One connection's way out: plain JSON on the HTTPS door (TLS already hides it), sealed on the
+/// plain door (link.rs).
+struct Wire {
+    /// The plain door: messages are sealed
+    sealed: bool,
+    /// The PC's 16 random bytes for this connection (sealed only)
+    ours: Vec<u8>,
+    seal: Option<super::link::Seal>,
 }
 
-fn websocket<S: Read + Write + Timed>(hub: Arc<Hub>, stream: S, peer: IpAddr) -> Option<()> {
-    // a phone only ever sends a few words: anything bigger is refused before it is read
-    let limits = WebSocketConfig::default().max_message_size(Some(MAX_MESSAGE)).max_frame_size(Some(MAX_MESSAGE));
+impl Wire {
+    fn text(&mut self, v: Value) -> Option<String> {
+        match (&mut self.seal, self.sealed) {
+            (_, false) => Some(v.to_string()),
+            (Some(s), true) => Some(s.seal(v)),
+            // no keys yet: nothing about the deck goes out
+            (None, true) => None,
+        }
+    }
+
+    fn send<S: Read + Write>(&mut self, ws: &mut tungstenite::WebSocket<S>, v: Value) -> bool {
+        match self.text(v) {
+            Some(t) => ws.send(Message::text(t)).is_ok(),
+            None => true,
+        }
+    }
+
+    /// In the open, before there are keys (the greeting, or why the phone isn't let in)
+    fn plain<S: Read + Write>(ws: &mut tungstenite::WebSocket<S>, v: Value) -> bool {
+        ws.send(Message::text(v.to_string())).is_ok()
+    }
+}
+
+/// What a connection on the plain door is keyed with: which secret, and the phone it proves.
+enum Keyed {
+    /// The QR's link key, or a typed code: pairing only
+    Pairing { typed: bool },
+    /// A paired phone's own secret: the first message that opens lets it in
+    Phone(String),
+}
+
+fn websocket<S: Read + Write + Timed>(hub: Arc<Hub>, stream: S, peer: IpAddr, sealed: bool) -> Option<()> {
+    // a phone only ever sends a few words: anything bigger is refused before it is read (a sealed
+    // message is a little bigger than what it holds)
+    let most = if sealed { MAX_MESSAGE * 2 } else { MAX_MESSAGE };
+    let limits = WebSocketConfig::default().max_message_size(Some(most)).max_frame_size(Some(most));
     let mut ws = tungstenite::accept_with_config(stream, Some(limits)).ok()?;
     // from here on a read waits a moment, so this thread can also send what the PC has to say
     ws.get_mut().read_timeout(Duration::from_millis(100));
+    let mut wire = Wire { sealed, ours: super::link::sha256(&super::random_bytes(32))[..16].to_vec(), seal: None };
+    let mut keyed: Option<Keyed> = None;
+    if sealed && !Wire::plain(&mut ws, json!({ "t": "hi", "v": 1, "n": super::link::encode(&wire.ours) })) {
+        return None;
+    }
     let (otx, orx): (_, Receiver<Out>) = channel();
     let conn = hub.register(otx, peer);
     let mut sent_version = 0u64;
@@ -509,11 +543,79 @@ fn websocket<S: Read + Write + Timed>(hub: Arc<Hub>, stream: S, peer: IpAddr) ->
         match ws.read() {
             Ok(Message::Text(t)) => {
                 last_heard = Instant::now();
-                if let Ok(v) = serde_json::from_str::<Value>(t.as_str()) {
+                let v = if !sealed {
+                    serde_json::from_str::<Value>(t.as_str()).ok()
+                } else if wire.seal.is_none() {
+                    // the phone's answer to the greeting: which secret, and its own random bytes
+                    let Some(k) = serde_json::from_str::<Value>(t.as_str()).ok().filter(|k| text(k, "t") == "key") else { break 'conn };
+                    let theirs = super::link::decode(text(&k, "n")).filter(|n| n.len() == 16);
+                    let kid = text(&k, "kid");
+                    match (hub.secret_for(kid), theirs) {
+                        (Some((secret, device)), Some(theirs)) => {
+                            wire.seal = Some(super::link::Seal::new(&secret, &wire.ours, &theirs));
+                            keyed = Some(match device {
+                                Some(d) => Keyed::Phone(d),
+                                None => Keyed::Pairing { typed: kid == "code" },
+                            });
+                            last_try = last_heard;
+                        }
+                        // a phone this PC forgot (or never knew): it pairs again
+                        _ => {
+                            let _ = Wire::plain(&mut ws, json!({ "t": "unpaired" }));
+                            break 'conn;
+                        }
+                    }
+                    None
+                } else {
+                    match wire.seal.as_mut().and_then(|s| s.open(t.as_str())) {
+                        Some(v) => Some(v),
+                        None => {
+                            // not sealed with the keys it chose: a wrong typed code counts as one
+                            let message = match keyed {
+                                Some(Keyed::Pairing { typed: true }) => match hub.pair(conn, "x", "", "", false) {
+                                    PairResult::Refused(m) => m,
+                                    _ => "That code isn't right.".into(),
+                                },
+                                Some(Keyed::Pairing { typed: false }) => "That QR code is old. Scan the one on the PC now.".into(),
+                                _ => "That didn't work. Try again.".into(),
+                            };
+                            let _ = Wire::plain(&mut ws, json!({ "t": "refused", "message": message }));
+                            break 'conn;
+                        }
+                    }
+                };
+                if let Some(v) = v {
+                    // a paired phone is in once its first message opens with its own secret
+                    if let Some(Keyed::Phone(device)) = &keyed
+                        && hub.device_of(conn).is_none()
+                    {
+                        match hub.attach(conn, device) {
+                            Some(name) => {
+                                let hello = json!({ "t": "hello", "name": name, "ticket": hub.ticket(conn) });
+                                if !wire.send(&mut ws, hello) {
+                                    break 'conn;
+                                }
+                            }
+                            None => {
+                                let _ = wire.send(&mut ws, json!({ "t": "unpaired" }));
+                                break 'conn;
+                            }
+                        }
+                        if text(&v, "t") == "hello" {
+                            continue;
+                        }
+                    }
                     if text(&v, "t") == "pair" {
                         last_try = last_heard;
                     }
-                    if !on_message(&hub, conn, &mut ws, &v) {
+                    let mut replies = vec![];
+                    let go_on = on_message(&hub, conn, &v, sealed, &mut replies);
+                    for r in replies {
+                        if !wire.send(&mut ws, r) {
+                            break 'conn;
+                        }
+                    }
+                    if !go_on {
                         break 'conn;
                     }
                 }
@@ -529,7 +631,8 @@ fn websocket<S: Read + Write + Timed>(hub: Arc<Hub>, stream: S, peer: IpAddr) ->
         while let Ok(o) = orx.try_recv() {
             match o {
                 Out::Text(t) => {
-                    if ws.send(Message::text(t)).is_err() {
+                    let Ok(v) = serde_json::from_str::<Value>(&t) else { continue };
+                    if !wire.send(&mut ws, v) {
                         break 'conn;
                     }
                 }
@@ -543,7 +646,7 @@ fn websocket<S: Read + Write + Timed>(hub: Arc<Hub>, stream: S, peer: IpAddr) ->
                 Some(t) if t.elapsed() > super::TICKET_LIFE / 2 => {
                     ticket_at = Some(Instant::now());
                     if let Some(k) = hub.ticket(conn) {
-                        if !send(&mut ws, json!({ "t": "ticket", "ticket": k })) {
+                        if !wire.send(&mut ws, json!({ "t": "ticket", "ticket": k })) {
                             break;
                         }
                     }
@@ -553,8 +656,17 @@ fn websocket<S: Read + Write + Timed>(hub: Arc<Hub>, stream: S, peer: IpAddr) ->
             // a phone that is in sees the deck, and every change to it
             let (v, snap) = hub.snapshot();
             if v != sent_version || !announced {
-                if !snap.is_empty() && ws.send(Message::text(format!("{{\"t\":\"snap\",\"deck\":{snap}}}"))).is_err() {
-                    break;
+                if !snap.is_empty() {
+                    let frame = if sealed {
+                        serde_json::from_str::<Value>(&snap).ok().and_then(|deck| wire.text(json!({ "t": "snap", "deck": deck })))
+                    } else {
+                        Some(format!("{{\"t\":\"snap\",\"deck\":{snap}}}"))
+                    };
+                    if let Some(f) = frame
+                        && ws.send(Message::text(f)).is_err()
+                    {
+                        break;
+                    }
                 }
                 sent_version = v;
                 announced = true;
@@ -563,7 +675,9 @@ fn websocket<S: Read + Write + Timed>(hub: Arc<Hub>, stream: S, peer: IpAddr) ->
             // not a paired phone, and not waiting for Allow: pings don't keep it open
             // (it is told why first, if the PC had something to say)
             while let Ok(Out::Text(t)) = orx.try_recv() {
-                let _ = ws.send(Message::text(t));
+                if let Ok(v) = serde_json::from_str::<Value>(&t) {
+                    let _ = wire.send(&mut ws, v);
+                }
             }
             break;
         }
@@ -578,26 +692,24 @@ fn text<'a>(v: &'a Value, k: &str) -> &'a str {
     v.get(k).and_then(|x| x.as_str()).unwrap_or("")
 }
 
-/// What a phone said. False closes the connection.
-fn on_message<S: Read + Write>(hub: &Hub, conn: u64, ws: &mut tungstenite::WebSocket<S>, v: &Value) -> bool {
+/// What a phone said; the answers go in `out`. False closes the connection. On the plain door
+/// (`sealed`) a phone is let in by its secret, never by sending its token.
+fn on_message(hub: &Hub, conn: u64, v: &Value, sealed: bool, out: &mut Vec<Value>) -> bool {
     match text(v, "t") {
-        "ping" => send(ws, json!({ "t": "pong" })),
-        "hello" => match hub.authenticate(conn, text(v, "token")) {
-            Some(name) => send(ws, json!({ "t": "hello", "name": name, "ticket": hub.ticket(conn) })),
-            None => send(ws, json!({ "t": "unpaired" })),
+        "ping" => out.push(json!({ "t": "pong" })),
+        "hello" if !sealed => match hub.authenticate(conn, text(v, "token")) {
+            Some(name) => out.push(json!({ "t": "hello", "name": name, "ticket": hub.ticket(conn) })),
+            None => out.push(json!({ "t": "unpaired" })),
         },
         "pair" => {
             let (name, model, tablet) = (text(v, "name"), text(v, "model"), v.get("tablet").and_then(|b| b.as_bool()).unwrap_or(false));
-            match hub.pair(conn, text(v, "code"), name, model, tablet) {
-                PairResult::Waiting(number) => send(ws, json!({ "t": "waiting", "number": number })),
-                PairResult::Approved { token, name, ticket } => send(ws, json!({ "t": "paired", "token": token, "name": name, "ticket": ticket })),
-                PairResult::Refused(message) => send(ws, json!({ "t": "refused", "message": message })),
-            }
+            out.push(match hub.pair(conn, text(v, "code"), name, model, tablet) {
+                PairResult::Waiting(number) => json!({ "t": "waiting", "number": number }),
+                PairResult::Approved { token, name, ticket } => json!({ "t": "paired", "token": token, "name": name, "ticket": ticket }),
+                PairResult::Refused(message) => json!({ "t": "refused", "message": message }),
+            });
         }
-        "page" => {
-            hub.set_page(conn, text(v, "page"));
-            true
-        }
+        "page" => hub.set_page(conn, text(v, "page")),
         kind @ ("press" | "long" | "release" | "turn") => {
             if let Some(device) = hub.device_of(conn) {
                 let kind = match kind {
@@ -608,10 +720,10 @@ fn on_message<S: Read + Write>(hub: &Hub, conn: u64, ws: &mut tungstenite::WebSo
                 };
                 hub.emit(PhoneEvent::Press { device, button: text(v, "button").chars().take(80).collect(), kind });
             }
-            true
         }
-        _ => true,
+        _ => {}
     }
+    true
 }
 
 #[cfg(test)]

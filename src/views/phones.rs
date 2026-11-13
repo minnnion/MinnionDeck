@@ -180,7 +180,9 @@ pub fn draw(app: &mut App, cv: &mut Cv, w: f32, h: f32) -> f32 {
             // what the link is: the HTTPS page (the safe way in), or the plain one when that was chosen
             if let Some(s) = h.secure_url() {
                 let note = if !h.goes_secure() {
-                    format!("This link is plain http: others on the Wi-Fi can read it. {s} is the safe one (Settings › Phones)")
+                    // the plain page's link is encrypted with the key in the QR (a typed code is weaker)
+                    let _ = s;
+                    "Encrypted with a key in the QR code. Scan it rather than typing the code when you can.".to_string()
                 } else {
                     // the start page sets up a phone that doesn't trust this PC yet, once
                     let fp = h.cert_fingerprint().map(|f| format!(" · certificate {f}")).unwrap_or_default();

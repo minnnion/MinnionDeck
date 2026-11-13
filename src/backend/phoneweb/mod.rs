@@ -23,6 +23,7 @@
 #![allow(dead_code)]
 
 pub mod cert;
+pub mod link;
 pub mod pics;
 mod server;
 
@@ -117,6 +118,9 @@ struct Guesses {
 
 struct Code {
     code: String,
+    /// The QR's link key (base64url, 16 bytes): it rides after the # with the code, so it never
+    /// crosses the Wi-Fi, and keys the pairing's encrypted link (link.rs)
+    link: String,
     made: Instant,
 }
 
@@ -195,13 +199,10 @@ pub struct Hub {
     pub require_match: AtomicBool,
     /// The QR opens the HTTPS page (Settings › Phones › Secure phone link)
     pub secure_link: AtomicBool,
-    /// The plain http page works too (Settings › Phones › Allow the plain http page); otherwise the
-    /// plain port only sends phones to the HTTPS page
-    pub plain_ok: AtomicBool,
     next_id: AtomicU64,
 }
 
-fn random_bytes(n: usize) -> Vec<u8> {
+pub(crate) fn random_bytes(n: usize) -> Vec<u8> {
     let mut b = vec![0u8; n];
     let _ = SystemRandom::new().fill(&mut b);
     b
@@ -217,7 +218,7 @@ fn token() -> String {
 }
 
 fn new_code() -> Code {
-    Code { code: format!("{:06}", random_number(0, 999_999)), made: Instant::now() }
+    Code { code: format!("{:06}", random_number(0, 999_999)), link: link::encode(&random_bytes(16)), made: Instant::now() }
 }
 
 fn lock(m: &Mutex<State>) -> std::sync::MutexGuard<'_, State> {
@@ -290,8 +291,7 @@ pub fn start(root: &Path, want_port: u16, events: Sender<PhoneEvent>, repaint: i
         events: Mutex::new(events),
         repaint: Box::new(repaint),
         require_match: AtomicBool::new(true),
-        secure_link: AtomicBool::new(true),
-        plain_ok: AtomicBool::new(false),
+        secure_link: AtomicBool::new(false),
         next_id: AtomicU64::new(1),
     });
     let (tls, secure_listeners) = match secure {
@@ -384,12 +384,6 @@ impl Hub {
         self.addrs().into_iter().next().unwrap_or_else(|| "localhost".into())
     }
 
-    /// Whether the plain http page is served (else the plain port only points at the HTTPS page).
-    /// Without a certificate there is no HTTPS page, so the plain one is all there is.
-    pub fn plain_served(&self) -> bool {
-        self.tls_port == 0 || self.plain_ok.load(Ordering::Relaxed)
-    }
-
     /// The code on screen now, made again when it ran out.
     pub fn code(&self) -> String {
         let mut st = lock(&self.st);
@@ -399,15 +393,54 @@ impl Hub {
         st.code.code.clone()
     }
 
-    /// What the QR holds: the page and the code, after a # so it never goes in a log.
+    /// What the QR holds: the page, and after the # (never sent over the network) the code and,
+    /// for the plain page, the link key that encrypts the pairing.
     pub fn url(&self) -> String {
-        format!("{}#{}", self.page_url(), self.code())
+        let code = self.code();
+        if self.goes_secure() {
+            format!("{}#{code}", self.page_url())
+        } else {
+            format!("{}#{code}.{}", self.page_url(), lock(&self.st).code.link)
+        }
     }
 
-    /// Whether phones are sent to the HTTPS page (there is a certificate, and the plain page isn't
-    /// what was chosen).
+    /// Whether phones are sent to the HTTPS page (Secure phone link on, and there is a
+    /// certificate). Otherwise they use the plain page, whose link is encrypted all the same.
     pub fn goes_secure(&self) -> bool {
-        self.tls_port != 0 && (self.secure_link.load(Ordering::Relaxed) || !self.plain_served())
+        self.tls_port != 0 && self.secure_link.load(Ordering::Relaxed)
+    }
+
+    /// The secret a connection on the plain door says it uses (`kid`, see link.rs): the QR's link
+    /// key ("pair"), the code on screen ("code"), or a paired phone's own (with that phone's id).
+    pub(crate) fn secret_for(&self, kid: &str) -> Option<(Vec<u8>, Option<String>)> {
+        let mut st = lock(&self.st);
+        if st.code.made.elapsed() > CODE_LIFE {
+            st.renew_code();
+        }
+        match kid {
+            "pair" => link::decode(&st.code.link).map(|k| (k, None)),
+            "code" => Some((link::code_secret(&st.code.code), None)),
+            _ => st.devices.iter().find_map(|d| {
+                let secret: Vec<u8> = (0..d.token_hash.len()).step_by(2).filter_map(|i| u8::from_str_radix(d.token_hash.get(i..i + 2)?, 16).ok()).collect();
+                (secret.len() == 32 && link::kid(&secret) == kid).then(|| (secret, Some(d.id.clone())))
+            }),
+        }
+    }
+
+    /// A paired phone proved itself on this connection (its secret opened its message): it is in.
+    /// Its name, or None when it was forgotten meanwhile.
+    pub(crate) fn attach(&self, conn: u64, device: &str) -> Option<String> {
+        let mut st = lock(&self.st);
+        let d = st.devices.iter_mut().find(|d| d.id == device)?;
+        d.last_seen_ms = now_ms();
+        let name = d.name.clone();
+        if let Some(c) = st.conns.get_mut(&conn) {
+            c.device = Some(device.to_string());
+        }
+        self.save(&st);
+        drop(st);
+        self.emit(PhoneEvent::Changed);
+        Some(name)
     }
 
     /// The page the QR and the Phones page point to. For the HTTPS page that is its start page on

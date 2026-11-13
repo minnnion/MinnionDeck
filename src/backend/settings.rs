@@ -37,7 +37,6 @@ const MAP: &[(&str, &str, Kind)] = &[
     ("conn", "conn", Kind::Choice(&["wifi", "usb", "both"])),
     ("match", "pin", Kind::Switch),
     ("secure", "securePhoneLink", Kind::Switch),
-    ("plain", "plainPhoneLink", Kind::Switch),
     ("follow", "followPc", Kind::Switch),
     ("awake", "awake", Kind::Switch),
     ("vibe", "haptics", Kind::Switch),

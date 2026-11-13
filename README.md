@@ -82,7 +82,7 @@ Keep a profile for each thing you do. Turn on **Switch automatically** and Minni
 Open the **Phones** page, scan the QR code with your phone's camera and open the link. Press **Allow** on the PC and the phone shows your deck, page for page, with buttons sized to fit its screen in portrait or landscape. It works on Android and iPhone, over your home Wi-Fi, with nothing to install.
 
 - Pairing uses a 6-digit code you confirm on the PC, and each phone gets its own key.
-- The QR code opens the page over HTTPS, so nobody else on the Wi-Fi can read what the phone sends. The first time, the phone is shown how to install your PC's own certificate, so it never warns that the connection isn't private.
+- What the phone and the PC send each other is encrypted with a key that comes in the QR code, so nobody else on the Wi-Fi can read it. There's no certificate warning and nothing to install.
 - Phones follow the page the PC is on, and a press on the phone runs on the PC right away.
 - Add it to your home screen and it opens full screen, like an app.
 

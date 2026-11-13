@@ -143,7 +143,6 @@ fn http_get(port: u16, path: &str) -> (String, Vec<u8>) {
 #[test]
 fn too_many_connections_at_once_are_closed_and_places_come_back() {
     let (hub, _rx, root) = server("cap");
-    hub.plain_ok.store(true, Ordering::Relaxed);
     // one address fills its share with connections that say nothing (half on each port)
     let held: Vec<TcpStream> = (0..super::server::MAX_PER_ADDRESS)
         .map(|i| TcpStream::connect(("127.0.0.1", if i % 2 == 0 { hub.port } else { hub.tls_port })).unwrap())
@@ -279,38 +278,29 @@ fn a_connection_that_is_not_a_phone_is_dropped_and_big_messages_are_refused() {
 }
 
 #[test]
-fn the_plain_door_only_points_at_https_unless_it_is_allowed() {
-    let (hub, _rx, root) = server("redirect");
-    // as a new install starts: the QR opens the start page, which goes on to the HTTPS page,
-    // whatever the Secure phone link switch says (the code rides after #, never sent)
-    let start = format!("http://{}:{}/start#", hub.addrs().first().cloned().unwrap_or_else(|| "localhost".into()), hub.port);
-    assert!(hub.url().starts_with(&start) && hub.goes_secure(), "{}", hub.url());
+fn the_qr_opens_the_plain_page_with_its_key_or_the_secure_one() {
+    let (hub, _rx, root) = server("links");
+    // by default: the plain page, with the code and the link key after the # (never sent)
+    let url = hub.url();
+    let (page, frag) = url.split_once('#').unwrap();
+    assert_eq!(page, hub.base_url());
+    let (code, key) = frag.split_once('.').expect("code.key");
+    assert_eq!(code, hub.code());
+    assert_eq!(super::link::decode(key).unwrap().len(), 16);
+    // Secure phone link: the start page, which goes on to https (no key needed there)
+    hub.secure_link.store(true, Ordering::Relaxed);
+    assert_eq!(hub.url(), format!("{}#{}", hub.start_url(), hub.code()));
     hub.secure_link.store(false, Ordering::Relaxed);
-    assert!(hub.url().starts_with(&start) && !hub.plain_served());
-    // the plain door serves the start page (no deck, no pairing) and what it needs; the rest goes to https
-    for path in ["/", "/start"] {
-        let (status, body) = http_get(hub.port, path);
-        let body = String::from_utf8_lossy(&body).into_owned();
-        assert!(status.ends_with("200 OK") && body.contains("One-time setup") && !body.contains("Pair with your PC"), "{path}");
-    }
-    assert!(http_get(hub.port, "/minniondeck.cer").1.starts_with(&[0x30]), "the certificate to install");
+    // the plain door serves the page, the start page and the certificate; the secure page answers the start page's question
+    let (status, body) = http_get(hub.port, "/");
+    assert!(status.ends_with("200 OK") && String::from_utf8_lossy(&body).contains("Pair with your PC"));
+    assert!(String::from_utf8_lossy(&http_get(hub.port, "/start").1).contains("One-time setup"));
+    assert!(http_get(hub.port, "/minniondeck.cer").1.starts_with(&[0x30]));
     let info: Value = serde_json::from_slice(&http_get(hub.port, "/cert-info").1).unwrap();
     assert_eq!(info["tls"], hub.tls_port);
-    // the secure page answers the start page's question across origins (only a phone that trusts it gets through)
     let (head, _) = ask(hub.tls_port, "GET", "/cert-info");
     assert!(head.contains("Access-Control-Allow-Origin: *"), "{head}");
-    let mut plain = TcpStream::connect(("127.0.0.1", hub.port)).unwrap();
-    plain.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-    plain.write_all(b"GET /media?id=x HTTP/1.1\r\nHost: 192.168.1.5:47800\r\n\r\n").unwrap();
-    let mut out = String::new();
-    let _ = plain.read_to_string(&mut out);
-    assert!(out.starts_with("HTTP/1.1 301") && out.contains(&format!("Location: https://192.168.1.5:{}/", hub.tls_port)), "{out}");
-    assert!(!out.contains("Pair with your PC"), "the page itself isn't served in the clear");
-    // and no WebSocket: a code or key can't be sent in the clear
-    let tcp = TcpStream::connect(("127.0.0.1", hub.port)).unwrap();
-    tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-    assert!(tungstenite::client(format!("ws://localhost:{}/ws", hub.port), tcp).is_err());
-    // a page of another website can't open the phone's WebSocket either
+    // a page of another website can't open the phone's WebSocket
     let mut s = tls(hub.tls_port);
     write!(s, "GET /ws HTTP/1.1\r\nHost: localhost:{}\r\nOrigin: https://evil.example\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n", hub.tls_port).unwrap();
     let mut all = Vec::new();
@@ -319,53 +309,143 @@ fn the_plain_door_only_points_at_https_unless_it_is_allowed() {
     let _ = fs::remove_dir_all(&root);
 }
 
-#[test]
-fn the_plain_page_has_no_certificate_and_pairs_the_same() {
-    let (hub, rx, root) = server("plain");
-    // "Allow the plain http page" is on (an install that had phones paired before)
-    hub.plain_ok.store(true, Ordering::Relaxed);
-    assert!(hub.tls_port > hub.port && hub.base_url().starts_with("http://") && hub.secure_url().unwrap().starts_with("https://"));
-    // the QR opens the start page (then HTTPS), or the plain one when Secure phone link is off; the code rides after #
-    assert_eq!(hub.page_url(), hub.start_url());
-    assert!(hub.url().starts_with(&hub.start_url()) && hub.url().ends_with(&format!("#{}", hub.code())));
-    hub.secure_link.store(false, Ordering::Relaxed);
-    assert!(hub.url().starts_with(&hub.base_url()) && hub.url().ends_with(&format!("#{}", hub.code())));
-    let (status, body) = http_get(hub.port, "/");
-    assert_eq!(status, "HTTP/1.1 200 OK");
-    assert!(String::from_utf8_lossy(&body).contains("Pair with your PC"));
-    assert_eq!(http_get(hub.port, "/icon?id=play&c=ff0000").0, "HTTP/1.1 403 Forbidden");
-    // pair and press over ws:// on the plain port
-    let tcp = TcpStream::connect(("127.0.0.1", hub.port)).unwrap();
-    tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-    let (mut phone, _) = tungstenite::client(format!("ws://localhost:{}/ws", hub.port), tcp).unwrap();
-    let read_t = |w: &mut WebSocket<TcpStream>, t: &str| -> Value {
+/// A phone on the plain page, as its JavaScript does it: the PC's greeting, then the keyed link.
+struct Plain {
+    ws: WebSocket<TcpStream>,
+    seal: Option<super::link::Seal>,
+    /// every frame that came in, as it crossed the Wi-Fi
+    seen: Vec<String>,
+}
+
+impl Plain {
+    fn open(port: u16) -> Plain {
+        let tcp = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let (ws, _) = tungstenite::client(format!("ws://localhost:{port}/ws"), tcp).unwrap();
+        Plain { ws, seal: None, seen: vec![] }
+    }
+
+    /// Keys the link with `secret`, named `kid`.
+    fn key(&mut self, kid: &str, secret: &[u8]) {
+        let hi = self.raw();
+        assert_eq!(hi["t"], "hi");
+        let pc = super::link::decode(hi["n"].as_str().unwrap()).unwrap();
+        let mine = [7u8; 16];
+        self.ws.send(Message::text(json!({ "t": "key", "kid": kid, "n": super::link::encode(&mine) }).to_string())).unwrap();
+        self.seal = Some(super::link::Seal::new(secret, &pc, &mine));
+    }
+
+    fn frame(&mut self) -> String {
+        loop {
+            if let Message::Text(t) = self.ws.read().unwrap() {
+                self.seen.push(t.to_string());
+                return t.to_string();
+            }
+        }
+    }
+
+    /// A message in the open (before the keys)
+    fn raw(&mut self) -> Value {
+        serde_json::from_str(&self.frame()).unwrap()
+    }
+
+    fn say(&mut self, v: Value) -> String {
+        let f = self.seal.as_mut().unwrap().phone_seal(v);
+        self.ws.send(Message::text(f.clone())).unwrap();
+        f
+    }
+
+    /// The next sealed message of this type (others, like the deck, may come first).
+    fn want(&mut self, t: &str) -> Value {
         for _ in 0..40 {
-            let Message::Text(txt) = w.read().unwrap() else { continue };
-            let v: Value = serde_json::from_str(txt.as_str()).unwrap();
+            let f = self.frame();
+            let v = self.seal.as_mut().unwrap().phone_open(&f).unwrap_or_else(|| panic!("a frame that doesn't open: {f}"));
             if v["t"] == t {
                 return v;
             }
         }
         panic!("no {t}");
-    };
-    phone.send(Message::text(json!({ "t": "pair", "code": hub.code(), "name": "Plain phone" }).to_string())).unwrap();
-    read_t(&mut phone, "waiting");
+    }
+}
+
+// the plain page's link: nothing readable crosses the Wi-Fi, and a recorded press can't be sent again
+#[test]
+fn the_plain_pages_link_is_encrypted_from_pairing_to_presses() {
+    let (hub, rx, root) = server("sealed");
+    let url = hub.url();
+    let key = super::link::decode(url.split_once('#').unwrap().1.split_once('.').unwrap().1).unwrap();
+    // pairing with the QR's link key
+    let mut phone = Plain::open(hub.port);
+    phone.key("pair", &key);
+    phone.say(json!({ "t": "pair", "code": hub.code(), "name": "Plain phone" }));
+    let number = phone.want("waiting")["number"].as_str().unwrap().to_string();
+    assert_eq!(hub.pending()[0].number, number);
     hub.approve(hub.pending()[0].conn);
-    let ticket = read_t(&mut phone, "paired")["ticket"].as_str().unwrap().to_string();
-    hub.set_snapshot(r#"{"profile":"Plain"}"#.to_string());
-    assert_eq!(read_t(&mut phone, "snap")["deck"]["profile"], "Plain");
-    phone.send(Message::text(json!({ "t": "press", "button": "p-1" }).to_string())).unwrap();
-    let button = loop {
+    let paired = phone.want("paired");
+    let tok = paired["token"].as_str().unwrap().to_string();
+    hub.set_snapshot(r#"{"profile":"Secret deck","pages":[]}"#.to_string());
+    assert_eq!(phone.want("snap")["deck"]["profile"], "Secret deck");
+    let press = phone.say(json!({ "t": "press", "button": "p-1" }));
+    let got = loop {
         if let PhoneEvent::Press { button, .. } = rx.recv_timeout(Duration::from_secs(5)).unwrap() {
             break button;
         }
     };
-    assert_eq!(button, "p-1");
-    assert_eq!(http_get(hub.port, &format!("/icon?id=play&c=ff0000&k={ticket}")).0, "HTTP/1.1 200 OK");
-    // a TLS handshake on the plain port is not answered
-    let mut wrong = tls(hub.port);
-    let mut sink = [0u8; 1];
-    assert!(wrong.read(&mut sink).map(|n| n == 0).unwrap_or(true));
+    assert_eq!(got, "p-1");
+    // what crossed the Wi-Fi: no token, no deck, no number
+    let wire = phone.seen.join("\n");
+    assert!(!wire.contains(&tok) && !wire.contains("Secret deck") && !wire.contains("paired"), "{wire}");
+    // the same press frame sent again: refused, and the connection closes
+    phone.ws.send(Message::text(press)).unwrap();
+    let mut refused = false;
+    for _ in 0..10 {
+        match phone.ws.read() {
+            Ok(Message::Text(t)) if t.contains("refused") => refused = true,
+            Ok(Message::Close(_)) | Err(_) => break,
+            _ => {}
+        }
+    }
+    assert!(refused, "a replayed press was taken");
+    while let Ok(e) = rx.try_recv() {
+        assert!(!matches!(e, PhoneEvent::Press { .. }), "the replay pressed again");
+    }
+    drop(phone);
+
+    // the phone comes back with its own secret (SHA-256 of its token): the token isn't sent
+    let secret = super::link::sha256(tok.as_bytes());
+    let mut again = Plain::open(hub.port);
+    again.key(&super::link::kid(&secret), &secret);
+    again.say(json!({ "t": "hello" }));
+    assert_eq!(again.want("hello")["name"], "Plain phone");
+    assert!(!again.seen.join("\n").contains(&tok));
+    drop(again);
+
+    // a forgotten phone, or one that isn't this PC's, is told in the open and must pair again
+    let mut stranger = Plain::open(hub.port);
+    let _ = stranger.raw();
+    stranger.ws.send(Message::text(json!({ "t": "key", "kid": "0011223344556677", "n": super::link::encode(&[1u8; 16]) }).to_string())).unwrap();
+    assert_eq!(stranger.raw()["t"], "unpaired");
+
+    // a typed code keys the link with the code; a wrong one counts as a wrong code
+    let mut typed = Plain::open(hub.port);
+    typed.key("code", &super::link::code_secret("000000"));
+    typed.say(json!({ "t": "pair", "code": "000000", "name": "x" }));
+    let r = typed.raw();
+    assert_eq!(r["t"], "refused");
+    let mut right = Plain::open(hub.port);
+    right.key("code", &super::link::code_secret(&hub.code()));
+    right.say(json!({ "t": "pair", "code": hub.code(), "name": "Typed" }));
+    right.want("waiting");
+    // an old QR's link key is refused (the code was renewed when the first phone paired)
+    let mut old = Plain::open(hub.port);
+    old.key("pair", &key);
+    old.say(json!({ "t": "pair", "code": "123456", "name": "x" }));
+    assert!(old.raw()["message"].as_str().unwrap().contains("old"));
+    // the plain door never takes the unencrypted messages the https page uses
+    let mut clear = Plain::open(hub.port);
+    let _ = clear.raw();
+    clear.ws.send(Message::text(json!({ "t": "hello", "token": tok }).to_string())).unwrap();
+    assert!(matches!(clear.ws.read(), Ok(Message::Close(_)) | Err(_)) || matches!(clear.ws.read(), Ok(Message::Close(_)) | Err(_)));
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -496,7 +576,6 @@ fn a_phone_that_stops_listening_is_dropped_and_devices_are_remembered() {
 fn phone_page_demo() {
     let (hub, rx, root) = server("demo");
     hub.require_match.store(false, Ordering::Relaxed);
-    hub.plain_ok.store(true, Ordering::Relaxed);
     let deck = json!({
         "profile": "Demo", "page": "p1", "follow": true,
         "settings": { "names": true, "vibe": true, "awake": true, "dark": true },
@@ -514,7 +593,7 @@ fn phone_page_demo() {
         ]
     });
     hub.set_snapshot(deck.to_string());
-    println!("DEMO http://localhost:{}/  https://localhost:{}/  code {}", hub.port, hub.tls_port, hub.code());
+    println!("DEMO http://localhost:{}/#{}  https://localhost:{}/  code {}", hub.port, hub.url().split_once('#').unwrap().1, hub.tls_port, hub.code());
     let t0 = std::time::Instant::now();
     while t0.elapsed() < Duration::from_secs(180) {
         if let Ok(PhoneEvent::Press { button, kind, .. }) = rx.recv_timeout(Duration::from_millis(200)) {

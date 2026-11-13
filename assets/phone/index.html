@@ -141,6 +141,109 @@ html, body { margin: 0; height: 100%; background: var(--ground); color: var(--te
 (function () {
   "use strict";
   var $ = function (id) { return document.getElementById(id); };
+  // ---- the encrypted link (plain http has no crypto.subtle; the PC's copy is phoneweb/link.rs) ----
+  var LINK = (function () {
+    var K = [0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+    function sha256(m) {
+      var l = m.length, n = ((l + 9 + 63) >> 6) << 6, b = new Uint8Array(n), w = new Uint32Array(64);
+      b.set(m); b[l] = 0x80;
+      var bits = l * 8; b[n - 4] = bits >>> 24; b[n - 3] = (bits >>> 16) & 255; b[n - 2] = (bits >>> 8) & 255; b[n - 1] = bits & 255;
+      b[n - 8] = Math.floor(l / 0x20000000) & 255;
+      var h = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+      for (var o = 0; o < n; o += 64) {
+        for (var i = 0; i < 16; i++) w[i] = (b[o + 4 * i] << 24) | (b[o + 4 * i + 1] << 16) | (b[o + 4 * i + 2] << 8) | b[o + 4 * i + 3];
+        for (i = 16; i < 64; i++) {
+          var x = w[i - 15], y = w[i - 2];
+          var s0 = ((x >>> 7) | (x << 25)) ^ ((x >>> 18) | (x << 14)) ^ (x >>> 3);
+          var s1 = ((y >>> 17) | (y << 15)) ^ ((y >>> 19) | (y << 13)) ^ (y >>> 10);
+          w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0;
+        }
+        var a = h[0], c = h[1], d = h[2], e = h[3], f = h[4], g = h[5], k = h[6], z = h[7];
+        for (i = 0; i < 64; i++) {
+          var S1 = ((f >>> 6) | (f << 26)) ^ ((f >>> 11) | (f << 21)) ^ ((f >>> 25) | (f << 7));
+          var t1 = (z + S1 + ((f & g) ^ (~f & k)) + K[i] + w[i]) | 0;
+          var S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+          var t2 = (S0 + ((a & c) ^ (a & d) ^ (c & d))) | 0;
+          z = k; k = g; g = f; f = (e + t1) | 0; e = d; d = c; c = a; a = (t1 + t2) | 0;
+        }
+        h[0] = (h[0] + a) | 0; h[1] = (h[1] + c) | 0; h[2] = (h[2] + d) | 0; h[3] = (h[3] + e) | 0;
+        h[4] = (h[4] + f) | 0; h[5] = (h[5] + g) | 0; h[6] = (h[6] + k) | 0; h[7] = (h[7] + z) | 0;
+      }
+      var out = new Uint8Array(32);
+      for (i = 0; i < 8; i++) { out[4 * i] = h[i] >>> 24; out[4 * i + 1] = (h[i] >>> 16) & 255; out[4 * i + 2] = (h[i] >>> 8) & 255; out[4 * i + 3] = h[i] & 255; }
+      return out;
+    }
+    function cat() { var n = 0, i; for (i = 0; i < arguments.length; i++) n += arguments[i].length; var r = new Uint8Array(n), o = 0; for (i = 0; i < arguments.length; i++) { r.set(arguments[i], o); o += arguments[i].length; } return r; }
+    function hmac(key, msg) {
+      if (key.length > 64) key = sha256(key);
+      var ik = new Uint8Array(64), ok = new Uint8Array(64);
+      for (var i = 0; i < 64; i++) { var kb = key[i] || 0; ik[i] = kb ^ 0x36; ok[i] = kb ^ 0x5c; }
+      return sha256(cat(ok, sha256(cat(ik, msg))));
+    }
+    function chacha20(key, nonce, counter, data) {
+      function rd(b, i) { return (b[i] | (b[i + 1] << 8) | (b[i + 2] << 16) | (b[i + 3] << 24)) >>> 0; }
+      var st = new Uint32Array(16), x = new Uint32Array(16), out = new Uint8Array(data.length);
+      st[0] = 0x61707865; st[1] = 0x3320646e; st[2] = 0x79622d32; st[3] = 0x6b206574;
+      for (var i = 0; i < 8; i++) st[4 + i] = rd(key, 4 * i);
+      for (i = 0; i < 3; i++) st[13 + i] = rd(nonce, 4 * i);
+      function q(a, b, c, d) {
+        x[a] += x[b]; x[d] ^= x[a]; x[d] = (x[d] << 16) | (x[d] >>> 16);
+        x[c] += x[d]; x[b] ^= x[c]; x[b] = (x[b] << 12) | (x[b] >>> 20);
+        x[a] += x[b]; x[d] ^= x[a]; x[d] = (x[d] << 8) | (x[d] >>> 24);
+        x[c] += x[d]; x[b] ^= x[c]; x[b] = (x[b] << 7) | (x[b] >>> 25);
+      }
+      for (var o = 0; o < data.length; o += 64) {
+        st[12] = (counter + o / 64) >>> 0;
+        x.set(st);
+        for (i = 0; i < 10; i++) { q(0, 4, 8, 12); q(1, 5, 9, 13); q(2, 6, 10, 14); q(3, 7, 11, 15); q(0, 5, 10, 15); q(1, 6, 11, 12); q(2, 7, 8, 13); q(3, 4, 9, 14); }
+        for (i = 0; i < 64 && o + i < data.length; i++) {
+          var wv = (x[i >> 2] + st[i >> 2]) >>> 0;
+          out[o + i] = data[o + i] ^ ((wv >>> (8 * (i & 3))) & 255);
+        }
+      }
+      return out;
+    }
+    var te = new TextEncoder(), td = new TextDecoder();
+    function utf8(s) { return te.encode(s); }
+    function b64e(b) { var s = ""; for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }
+    function b64d(t) { t = t.replace(/-/g, "+").replace(/_/g, "/"); while (t.length % 4) t += "="; var s = atob(t), b = new Uint8Array(s.length); for (var i = 0; i < s.length; i++) b[i] = s.charCodeAt(i); return b; }
+    function hex(b) { var s = ""; for (var i = 0; i < b.length; i++) s += (b[i] < 16 ? "0" : "") + b[i].toString(16); return s; }
+    function rand(n) { var b = new Uint8Array(n); crypto.getRandomValues(b); return b; }
+    // one connection's keys and message numbers
+    function Seal(secret, pc, phone) {
+      var conn = hmac(secret, cat(utf8("minniondeck-link-v1"), pc, phone));
+      this.enc = hmac(conn, utf8("enc")); this.mac = hmac(conn, utf8("mac")); this.sent = 0; this.got = 0;
+    }
+    Seal.prototype.seal = function (o, dir) {
+      o.q = ++this.sent;
+      var nonce = rand(12), body = chacha20(this.enc, nonce, 1, utf8(JSON.stringify(o)));
+      var head = cat(new Uint8Array([dir || 1]), nonce);
+      return "e" + b64e(cat(head, body, hmac(this.mac, cat(head, body)).subarray(0, 16)));
+    };
+    Seal.prototype.open = function (frame, dir) {
+      if (frame.charAt(0) !== "e") return null;
+      var raw; try { raw = b64d(frame.slice(1)); } catch (x) { return null; }
+      if (raw.length < 29 || raw[0] !== (dir || 2)) return null;
+      var head = raw.subarray(0, 13), body = raw.subarray(13, raw.length - 16), tag = raw.subarray(raw.length - 16);
+      var want = hmac(this.mac, cat(head, body)), diff = 0;
+      for (var i = 0; i < 16; i++) diff |= want[i] ^ tag[i];
+      if (diff) return null;
+      var o; try { o = JSON.parse(td.decode(chacha20(this.enc, head.subarray(1), 1, body))); } catch (x) { return null; }
+      if (!(o.q > this.got)) return null;
+      this.got = o.q;
+      return o;
+    };
+    return {
+      Seal: Seal, sha256: sha256, hmac: hmac, chacha20: chacha20, utf8: utf8, hex: hex, rand: rand, b64e: b64e, b64d: b64d,
+      kid: function (secret) { return hex(sha256(secret)).slice(0, 16); },
+      tokenSecret: function (token) { return sha256(utf8(token)); },
+      codeSecret: function (code) { return sha256(utf8("minniondeck-code:" + code)); }
+    };
+  })();
+  // On the plain http page the link is encrypted here (on https, TLS already does it). The QR's
+  // address carries the code and the link key after the #, which the browser never sends.
+  var sealed = location.protocol === "http:", seal = null, pcBytes = null;
+  var hashParts = (location.hash || "").replace("#", "").split("."), linkKey = hashParts[1] || "";
   var KEY = "md.token";
   var ua = navigator.userAgent || "";
   var isIOS = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
@@ -164,21 +267,54 @@ html, body { margin: 0; height: 100%; background: var(--ground); color: var(--te
     return "Phone";
   }
   function isTablet() { return Math.min(screen.width, screen.height) >= 600; }
-  function send(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
+  function send(o) {
+    if (!ws || ws.readyState !== 1) return;
+    if (!sealed) ws.send(JSON.stringify(o));
+    else if (seal) ws.send(seal.seal(o, 1));
+  }
+  // the link's keys for this connection, from a secret both ends have (never sent)
+  function key(kid, secret) {
+    var mine = LINK.rand(16);
+    ws.send(JSON.stringify({ t: "key", kid: kid, n: LINK.b64e(mine) }));
+    seal = new LINK.Seal(secret, pcBytes, mine);
+  }
+  // the connection is ready: a paired phone proves itself, a new one pairs
+  function begin() {
+    if (token) {
+      if (sealed) { var s = LINK.tokenSecret(token); key(LINK.kid(s), s); send({ t: "hello" }); }
+      else send({ t: "hello", token: token });
+      return;
+    }
+    if (sealed && linkKey) key("pair", LINK.b64d(linkKey));
+    var again = wantPair; wantPair = false;
+    if (!needPair() && again) doPair();
+  }
 
   // ---- connection ----
   function connect() {
     var proto = location.protocol === "https:" ? "wss://" : "ws://";
+    pcBytes = null; seal = null;
     ws = new WebSocket(proto + location.host + "/ws");
     var opened = false;
     ws.onopen = function () {
-      opened = true; retry = 0; show("lost", false);
-      if (token) send({ t: "hello", token: token });
-      else { var again = wantPair; wantPair = false; if (!needPair() && again) doPair(); }
+      opened = true; retry = 0; show("lost", false); seal = null;
+      // sealed: the PC greets first with its random bytes, then the link is keyed
+      if (!sealed) begin();
       clearInterval(ping); ping = setInterval(function () { send({ t: "ping" }); }, 15000);
     };
-    ws.onmessage = function (e) { var m; try { m = JSON.parse(e.data); } catch (x) { return; } onMsg(m); };
+    ws.onmessage = function (e) {
+      var m = null, d = String(e.data);
+      if (sealed && d.charAt(0) === "e") { m = seal && seal.open(d, 2); if (!m) return; }
+      else {
+        try { m = JSON.parse(d); } catch (x) { return; }
+        if (sealed && m.t === "hi") { pcBytes = LINK.b64d(m.n || ""); begin(); return; }
+        // before the keys, only "you aren't paired" and "refused" come in the open
+        if (sealed && m.t !== "unpaired" && m.t !== "refused") return;
+      }
+      onMsg(m);
+    };
     ws.onclose = function () {
+      seal = null;
       clearInterval(ping); if (paired) show("lost", true);
       // a phone that isn't paired yet doesn't keep a connection open (the PC closes idle ones):
       // it connects again when Pair is pressed
@@ -194,14 +330,16 @@ html, body { margin: 0; height: 100%; background: var(--ground); color: var(--te
   }
   function needPair() {
     paired = false; show("pair", true); $("ios-pair").hidden = !(isIOS && !standalone());
-    var h = (location.hash || "").replace("#", "");
-    if (/^\d{6}$/.test(h)) { $("code").value = h; history.replaceState(null, "", location.pathname); doPair(); return true; }
+    var h = hashParts[0] || "";
+    if (/^\d{6}$/.test(h)) { hashParts = []; $("code").value = h; history.replaceState(null, "", location.pathname); doPair(); return true; }
     return false;
   }
   function doPair() {
     var c = $("code").value.replace(/\D/g, ""); if (c.length !== 6) { $("pairerr").textContent = "Type the 6 digits from your PC."; return; }
     $("pairerr").textContent = "";
-    if (!ws || ws.readyState !== 1) { wantPair = true; if (!ws || ws.readyState > 1) connect(); return; }
+    if (!ws || ws.readyState !== 1 || (sealed && !pcBytes)) { wantPair = true; if (!ws || ws.readyState > 1) connect(); return; }
+    // typed, not scanned: the link is keyed with the code itself
+    if (sealed && !seal) key("code", LINK.codeSecret(c));
     send({ t: "pair", code: c, name: deviceName(), model: ua.slice(0, 40), tablet: isTablet() });
   }
   function onMsg(m) {

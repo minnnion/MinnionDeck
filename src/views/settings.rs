@@ -99,8 +99,7 @@ fn sections(tab: usize, _app: &App) -> Vec<Section> {
                 r("Connect over", "Phones connect over Wi-Fi. USB and Both are coming soon.", Seg("conn", &["Wi-Fi", "USB", "Both"], 0)),
                 r("Port", "Change this only if another app uses it.", Select("port", "8765")),
                 r("Show a matching number when a new phone pairs", "Check the same number shows on both before you accept.", Switch("match", true)),
-                r("Secure phone link", "The QR code opens the HTTPS page, so nobody else on the Wi-Fi can read what phones send. The phone warns about the certificate once.", Switch("secure", true)),
-                r("Allow the plain http page", "For phones paired over http:// before version 0.2.2. Off: the http address only sends phones to the HTTPS page. On a Wi-Fi you share, pair your phones again with the QR code, then turn this off.", Switch("plain", false)),
+                r("Secure phone link", "Off: phones use the plain page, whose link is encrypted with a key in the QR code (no warning, nothing to install). On: the QR code opens the HTTPS page, which also stops anyone changing the page on its way; each phone installs this PC's certificate once.", Switch("secure", false)),
             ]),
             sec("On the phone", vec![
                 r("Phones follow the page open on this PC", "", Switch("follow", true)),

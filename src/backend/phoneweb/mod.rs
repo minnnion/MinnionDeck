@@ -404,13 +404,22 @@ impl Hub {
         format!("{}#{}", self.page_url(), self.code())
     }
 
-    /// The page the QR and the Phones page point to: the HTTPS page, unless there is no
-    /// certificate, or the plain page is allowed and Secure phone link is off.
+    /// Whether phones are sent to the HTTPS page (there is a certificate, and the plain page isn't
+    /// what was chosen).
+    pub fn goes_secure(&self) -> bool {
+        self.tls_port != 0 && (self.secure_link.load(Ordering::Relaxed) || !self.plain_served())
+    }
+
+    /// The page the QR and the Phones page point to. For the HTTPS page that is its start page on
+    /// the plain door: it opens without a warning, checks whether the phone trusts this PC's
+    /// certificate, and goes on to the secure page, or first shows the one-time setup.
     pub fn page_url(&self) -> String {
-        match self.secure_url() {
-            Some(s) if self.secure_link.load(Ordering::Relaxed) || !self.plain_served() => s,
-            _ => self.base_url(),
-        }
+        if self.goes_secure() { self.start_url() } else { self.base_url() }
+    }
+
+    /// The start page (start.html) on the plain door.
+    pub fn start_url(&self) -> String {
+        format!("http://{}:{}/start", self.host(), self.port)
     }
 
     /// The plain http page: no certificate warning, but everything crosses the Wi-Fi readable.

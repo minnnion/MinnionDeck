@@ -281,13 +281,27 @@ fn a_connection_that_is_not_a_phone_is_dropped_and_big_messages_are_refused() {
 #[test]
 fn the_plain_door_only_points_at_https_unless_it_is_allowed() {
     let (hub, _rx, root) = server("redirect");
-    // as a new install starts: the QR opens the HTTPS page, whatever the Secure phone link switch says
-    assert!(hub.url().starts_with("https://"));
+    // as a new install starts: the QR opens the start page, which goes on to the HTTPS page,
+    // whatever the Secure phone link switch says (the code rides after #, never sent)
+    let start = format!("http://{}:{}/start#", hub.addrs().first().cloned().unwrap_or_else(|| "localhost".into()), hub.port);
+    assert!(hub.url().starts_with(&start) && hub.goes_secure(), "{}", hub.url());
     hub.secure_link.store(false, Ordering::Relaxed);
-    assert!(hub.url().starts_with("https://") && !hub.plain_served());
+    assert!(hub.url().starts_with(&start) && !hub.plain_served());
+    // the plain door serves the start page (no deck, no pairing) and what it needs; the rest goes to https
+    for path in ["/", "/start"] {
+        let (status, body) = http_get(hub.port, path);
+        let body = String::from_utf8_lossy(&body).into_owned();
+        assert!(status.ends_with("200 OK") && body.contains("One-time setup") && !body.contains("Pair with your PC"), "{path}");
+    }
+    assert!(http_get(hub.port, "/minniondeck.cer").1.starts_with(&[0x30]), "the certificate to install");
+    let info: Value = serde_json::from_slice(&http_get(hub.port, "/cert-info").1).unwrap();
+    assert_eq!(info["tls"], hub.tls_port);
+    // the secure page answers the start page's question across origins (only a phone that trusts it gets through)
+    let (head, _) = ask(hub.tls_port, "GET", "/cert-info");
+    assert!(head.contains("Access-Control-Allow-Origin: *"), "{head}");
     let mut plain = TcpStream::connect(("127.0.0.1", hub.port)).unwrap();
     plain.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-    plain.write_all(b"GET /index.html HTTP/1.1\r\nHost: 192.168.1.5:47800\r\n\r\n").unwrap();
+    plain.write_all(b"GET /media?id=x HTTP/1.1\r\nHost: 192.168.1.5:47800\r\n\r\n").unwrap();
     let mut out = String::new();
     let _ = plain.read_to_string(&mut out);
     assert!(out.starts_with("HTTP/1.1 301") && out.contains(&format!("Location: https://192.168.1.5:{}/", hub.tls_port)), "{out}");
@@ -311,9 +325,9 @@ fn the_plain_page_has_no_certificate_and_pairs_the_same() {
     // "Allow the plain http page" is on (an install that had phones paired before)
     hub.plain_ok.store(true, Ordering::Relaxed);
     assert!(hub.tls_port > hub.port && hub.base_url().starts_with("http://") && hub.secure_url().unwrap().starts_with("https://"));
-    // the QR opens the HTTPS page, or the plain one when Secure phone link is off; the code rides after #
-    assert_eq!(hub.page_url(), hub.secure_url().unwrap());
-    assert!(hub.url().starts_with("https://") && hub.url().ends_with(&format!("#{}", hub.code())));
+    // the QR opens the start page (then HTTPS), or the plain one when Secure phone link is off; the code rides after #
+    assert_eq!(hub.page_url(), hub.start_url());
+    assert!(hub.url().starts_with(&hub.start_url()) && hub.url().ends_with(&format!("#{}", hub.code())));
     hub.secure_link.store(false, Ordering::Relaxed);
     assert!(hub.url().starts_with(&hub.base_url()) && hub.url().ends_with(&format!("#{}", hub.code())));
     let (status, body) = http_get(hub.port, "/");

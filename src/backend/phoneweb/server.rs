@@ -24,6 +24,9 @@ use super::{Hub, Kind, Out, PairResult, PhoneEvent, pics};
 use crate::backend::media;
 
 const INDEX: &str = include_str!("../../../assets/phone/index.html");
+/// What the QR opens, on the plain door: it checks whether this phone trusts the PC's certificate
+/// and goes on to the secure page (no warning), or shows the one-time setup that makes it trust it.
+const START: &str = include_str!("../../../assets/phone/start.html");
 const MANIFEST: &str = include_str!("../../../assets/phone/manifest.webmanifest");
 const FONT_400: &[u8] = include_bytes!("../../../assets/fonts/PixelifySans-400.ttf");
 const FONT_600: &[u8] = include_bytes!("../../../assets/fonts/PixelifySans-600.ttf");
@@ -281,12 +284,19 @@ fn content_security_policy() -> &'static str {
     CSP.get_or_init(|| {
         // a browser hashes what is between the tags, with line ends as the page parser leaves them
         let hash = |open: &str, close: &str| {
-            let inner = INDEX.split_once(open).and_then(|(_, rest)| rest.split_once(close)).map(|(inner, _)| inner.replace("\r\n", "\n")).unwrap_or_default();
-            let digest = ring::digest::digest(&ring::digest::SHA256, inner.as_bytes());
-            format!("'sha256-{}'", base64::engine::general_purpose::STANDARD.encode(digest.as_ref()))
+            [INDEX, START]
+                .iter()
+                .map(|page| {
+                    let inner = page.split_once(open).and_then(|(_, rest)| rest.split_once(close)).map(|(inner, _)| inner.replace("\r\n", "\n")).unwrap_or_default();
+                    let digest = ring::digest::digest(&ring::digest::SHA256, inner.as_bytes());
+                    format!("'sha256-{}'", base64::engine::general_purpose::STANDARD.encode(digest.as_ref()))
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
         };
+        // https: lets the start page ask the secure page whether this phone trusts it
         format!(
-            "default-src 'none'; script-src {}; style-src {}; img-src 'self'; font-src 'self'; media-src data:; connect-src 'self' ws: wss:; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+            "default-src 'none'; script-src {}; style-src {}; img-src 'self'; font-src 'self'; media-src data:; connect-src 'self' ws: wss: https:; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
             hash("<script>", "</script>"),
             hash("<style>", "</style>")
         )
@@ -294,8 +304,13 @@ fn content_security_policy() -> &'static str {
 }
 
 fn respond(s: &mut impl Write, h: &Head, status: &str, ctype: &str, body: &[u8], cache: &str) {
+    respond_with(s, h, status, ctype, body, cache, "")
+}
+
+/// `respond` with more header lines (each ending in \r\n).
+fn respond_with(s: &mut impl Write, h: &Head, status: &str, ctype: &str, body: &[u8], cache: &str, extra: &str) {
     let head = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nCache-Control: {cache}\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: {}\r\n\r\n",
+        "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nCache-Control: {cache}\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: {}\r\n{extra}\r\n",
         body.len(),
         content_security_policy()
     );
@@ -349,8 +364,12 @@ fn handle_plain(hub: Arc<Hub>, tcp: TcpStream, peer: IpAddr) -> Option<()> {
     let head = read_head(&mut s)?;
     // the plain page only when it is allowed: otherwise codes and keys would cross the Wi-Fi readable
     if !hub.plain_served() {
-        if !wants_websocket(&head) {
-            redirect_to_https(&hub, &head, &mut s);
+        // only the start page and what it needs (nothing about your deck): the rest goes to https
+        match head.path.as_str() {
+            _ if wants_websocket(&head) => {}
+            "/" | "/index.html" | "/start" => respond(&mut s, &head, "200 OK", "text/html; charset=utf-8", START.as_bytes(), "no-cache"),
+            "/cert-info" | "/minniondeck.cer" | "/font-400.ttf" | "/font-700.ttf" | "/app-icon-192.png" => route(&hub, &head, &mut s),
+            _ => redirect_to_https(&hub, &head, &mut s),
         }
         return Some(());
     }
@@ -425,9 +444,13 @@ fn route(hub: &Hub, h: &Head, s: &mut impl Write) {
             Some(b) => respond(s, h, "200 OK", "image/png", &b, "max-age=86400"),
             None => no(s),
         },
+        "/start" => respond(s, h, "200 OK", "text/html; charset=utf-8", START.as_bytes(), "no-cache"),
+        // public: the start page on the plain door asks the secure door for it, to see whether
+        // this phone trusts the PC's certificate (the answer only arrives when it does)
         "/cert-info" => {
             let fp = hub.cert_fingerprint().unwrap_or_default();
-            respond(s, h, "200 OK", "application/json", json!({ "fingerprint": fp }).to_string().as_bytes(), "no-cache")
+            let tls = if hub.tls_port != 0 { hub.tls_port } else { 0 };
+            respond_with(s, h, "200 OK", "application/json", json!({ "fingerprint": fp, "tls": tls }).to_string().as_bytes(), "no-store", "Access-Control-Allow-Origin: *\r\n")
         }
         "/minniondeck.cer" => match hub.cert_der() {
             Some(b) => respond(s, h, "200 OK", "application/x-x509-ca-cert", &b, "no-cache"),
@@ -604,13 +627,15 @@ mod tests {
     #[test]
     fn the_policy_names_the_pages_own_script_and_style() {
         let csp = content_security_policy();
-        assert_eq!(INDEX.matches("<script>").count(), 1, "one script, the one the policy allows");
-        assert_eq!(INDEX.matches("<style>").count(), 1);
-        assert_eq!(csp.matches("'sha256-").count(), 2, "{csp}");
-        // nothing in the page needs more than the policy gives: no inline handlers or style attributes
-        for needs_more in ["innerHTML", " onclick=", " onload=", " style=\"", "javascript:", "eval("] {
-            assert!(!INDEX.contains(needs_more), "the phone page uses {needs_more}");
+        for page in [INDEX, START] {
+            assert_eq!(page.matches("<script>").count(), 1, "one script, the one the policy allows");
+            assert_eq!(page.matches("<style>").count(), 1);
+            // nothing in the page needs more than the policy gives: no inline handlers or style attributes
+            for needs_more in ["innerHTML", " onclick=", " onload=", " style=\"", "javascript:", "eval("] {
+                assert!(!page.contains(needs_more), "a phone page uses {needs_more}");
+            }
         }
+        assert_eq!(csp.matches("'sha256-").count(), 4, "{csp}");
     }
 
     #[test]

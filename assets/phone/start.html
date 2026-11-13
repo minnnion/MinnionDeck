@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1e2433">
+<link rel="icon" href="/app-icon-192.png">
+<title>Minniondeck</title>
+<style>
+@font-face { font-family: "Pixelify"; font-weight: 400; src: url(/font-400.ttf); }
+@font-face { font-family: "Pixelify"; font-weight: 700; src: url(/font-700.ttf); }
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; background: #1e2433; color: #e4eaf6; font-family: "Pixelify", system-ui, sans-serif; }
+main { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; text-align: center; }
+.card { max-width: 440px; width: 100%; border: 4px solid #e4eaf6; background: #2d3142; box-shadow: 6px 6px 0 #10131c; padding: 20px; }
+h1 { margin: 0 0 8px; font-size: 22px; }
+p { margin: 8px 0; color: #9aa6c2; font-size: 15px; line-height: 1.4; }
+ol { text-align: left; font-size: 14px; line-height: 1.5; padding-left: 22px; margin: 10px 0; }
+.btn { display: inline-block; font: inherit; font-size: 16px; font-weight: 700; padding: 10px 18px; margin: 8px 4px 0; border: 4px solid #e4eaf6; background: #5fd0a8; color: #1e2433; box-shadow: 4px 4px 0 #10131c; text-decoration: none; cursor: pointer; }
+.btn.plain { background: transparent; color: #e4eaf6; }
+.small { font-size: 12px; word-break: break-all; }
+.err { color: #ff5a5f; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <div class="card" id="checking">
+    <h1>Minniondeck</h1>
+    <p>Opening your deck…</p>
+  </div>
+  <div class="card" id="setup" hidden>
+    <h1>One-time setup</h1>
+    <p>So the connection to your PC is private and your phone never warns about it, install your PC's certificate on this phone once.</p>
+    <a class="btn" href="/minniondeck.cer" download="MinnionDeck.cer">1. Download the certificate</a>
+    <ol id="steps-ios" hidden>
+      <li>Tap Download above, then Allow.</li>
+      <li>Open Settings and tap Profile Downloaded, then Install.</li>
+      <li>Open Settings › General › About › Certificate Trust Settings and turn on MinnionDeck on this PC.</li>
+      <li>Come back here and tap Open my deck.</li>
+    </ol>
+    <ol id="steps-android" hidden>
+      <li>Tap Download above.</li>
+      <li>Open Settings and search for CA certificate. Choose Install a certificate › CA certificate, then Install anyway.</li>
+      <li>Pick MinnionDeck.cer from Downloads.</li>
+      <li>Come back here and tap Open my deck.</li>
+    </ol>
+    <button class="btn" id="again">2. Open my deck</button>
+    <p class="err" id="notyet" hidden>This phone doesn't trust the certificate yet. Check the steps above, then try again.</p>
+    <p>It only works for addresses on your home network, so it can't vouch for any other website.</p>
+    <p class="small" id="fp"></p>
+    <p><a class="btn plain" id="anyway" href="#">Skip (the phone will warn)</a></p>
+  </div>
+</main>
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var ua = navigator.userAgent || "";
+  var isIOS = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  // the pairing code from the QR stays after the #, so it never travels over the network
+  var code = (location.hash || "").replace("#", "");
+  var secure = "";
+  function deck() { location.replace(secure + (/^\d{6}$/.test(code) ? "#" + code : "")); }
+  // whether this phone trusts the PC's certificate: the secure page answers only then
+  function trusted() {
+    var c = new AbortController(), t = setTimeout(function () { c.abort(); }, 4000);
+    return fetch(secure + "cert-info", { cache: "no-store", signal: c.signal }).then(function (r) { clearTimeout(t); return r.ok; }, function () { clearTimeout(t); return false; });
+  }
+  function setup() {
+    $("checking").hidden = true; $("setup").hidden = false;
+    $("steps-ios").hidden = !isIOS; $("steps-android").hidden = isIOS;
+  }
+  $("again").onclick = function () { $("notyet").hidden = true; trusted().then(function (ok) { if (ok) deck(); else $("notyet").hidden = false; }); };
+  $("anyway").onclick = function (e) { e.preventDefault(); deck(); };
+  fetch("/cert-info", { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (j) {
+    if (!j.tls) { location.replace("/" + location.hash); return; }
+    secure = "https://" + location.hostname + ":" + j.tls + "/";
+    if (j.fingerprint) $("fp").textContent = "Fingerprint (the same on the PC's Phones page): " + j.fingerprint;
+    return trusted().then(function (ok) { if (ok) deck(); else setup(); });
+  }).catch(setup);
+})();
+</script>
+</body>
+</html>

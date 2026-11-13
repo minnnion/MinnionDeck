@@ -179,12 +179,12 @@ pub fn draw(app: &mut App, cv: &mut Cv, w: f32, h: f32) -> f32 {
             cv.text(x + 18.0 + 140.0, cy + 18.0, 26.0, 20.0, 700, th.ink, &format!("{} {}", &code[..3], &code[3..]));
             // what the link is: the HTTPS page (the safe way in), or the plain one when that was chosen
             if let Some(s) = h.secure_url() {
-                let note = if page != s {
+                let note = if !h.goes_secure() {
                     format!("This link is plain http: others on the Wi-Fi can read it. {s} is the safe one (Settings › Phones)")
                 } else {
-                    // the phone page has "Stop the certificate warning" with the steps
-                    let fp = h.cert_fingerprint().map(|f| format!(" · {f}")).unwrap_or_default();
-                    format!("Warning on the phone? Tap \"Stop the certificate warning\" there{fp}")
+                    // the start page sets up a phone that doesn't trust this PC yet, once
+                    let fp = h.cert_fingerprint().map(|f| format!(" · certificate {f}")).unwrap_or_default();
+                    format!("A new phone installs this PC's certificate once, so it never warns{fp}")
                 };
                 cv.text_fit(x + 18.0, cy + 44.0, 19.0, 12.0, 400, th.slate, &note, left_w - 36.0);
             }

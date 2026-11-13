@@ -6,7 +6,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 ## [0.2.2] - 2026-11-13
 
 ### Added
-- **Stop the certificate warning:** the PC makes its own certificate authority for the phone page, limited to home-network addresses. Install it on a phone once (the phone page shows how) and the page is trusted, also from the Home Screen and after the PC's address changes.
+- **One-time phone setup, no certificate warning:** the PC makes its own certificate authority for the phone page, limited to home-network addresses. The QR code opens a setup page that checks whether the phone trusts it and, if not, shows how to install it once; then the deck opens over HTTPS with no warning, also from the Home Screen and after the PC's address changes.
 - **Password backups** (Settings › Backup › Move to another PC): a backup locked with a password you choose, which opens on another PC or after Windows is installed again. Ordinary backups still open only on the Windows account that made them.
 
 ### Changed

@@ -225,8 +225,12 @@ fn unpack_media(media_dir: Option<&Path>, items: &Value, pkg: &package::Package,
     for item in items.as_array().into_iter().flatten() {
         let Some(path) = item["media"].as_str() else { continue };
         let bytes = pkg.get(path).ok_or_else(|| format!("{path} is missing from the file."))?;
-        // the same checks as a picture imported by hand: its kind, its size, and that it opens
-        super::media::check(bytes, kind).map_err(|e| format!("{path}: {e}"))?;
+        // the same checks as a picture imported by hand: its kind, its size, and that it opens. A
+        // picture that fails is left out (its buttons show their colour instead); the rest of the
+        // profile still comes in, as it did before these checks
+        if super::media::check(bytes, kind).is_err() {
+            continue;
+        }
         // only looking: nothing is written
         let Some(media_dir) = media_dir else {
             out.push(item.clone());
@@ -278,6 +282,17 @@ pub fn import_from(media_dir: &Path, path: &Path) -> Result<Value, String> {
 /// but its pictures stay in the file (for looking at a profile before deciding to add it).
 pub fn inspect_from(path: &Path) -> Result<Value, String> {
     unpack(None, &open_file(path)?)
+}
+
+/// How many pictures and GIF files a profile file lists, and how many pass the checks (tests).
+#[cfg(test)]
+pub fn picture_counts(path: &Path) -> Result<(usize, usize), String> {
+    let pkg = open_file(path)?;
+    let assets = pkg.json_or("assets/assets.json", json!({}))?;
+    let listed = ["images", "gifFiles"].iter().map(|k| assets[*k].as_array().map_or(0, |a| a.len())).sum();
+    let look = unpack(None, &pkg)?;
+    let kept = ["images", "gifFiles"].iter().map(|k| look[*k].as_array().map_or(0, |a| a.len())).sum();
+    Ok((listed, kept))
 }
 
 /// Reads, decrypts and unzips a .mdprofile, letting go of each step's copy as soon as it is done.

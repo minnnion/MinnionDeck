@@ -321,13 +321,12 @@ impl Library {
     /// time) and returns it with what the window shows, plus a message for the user, if any.
     pub fn open() -> (Library, Sample, Option<String>) {
         let paths = Paths::find();
-        let mut note = paths.make_folders().err();
+        // a restore that stopped half-way (the PC went off) is finished or undone first, before
+        // the folders are made (an empty media folder made now would hide where it stopped)
+        let restore_note = super::backups::finish_interrupted_restore(&paths);
+        let mut note = paths.make_folders().err().or(restore_note);
         // what an earlier version left as plain files is sealed first
         if let Some(problem) = paths.migrate_legacy() {
-            note = Some(problem);
-        }
-        // a restore that stopped half-way (the PC went off) is finished or undone first
-        if let Some(problem) = super::backups::finish_interrupted_restore(&paths) {
             note = Some(problem);
         }
         let file = paths.library_file();

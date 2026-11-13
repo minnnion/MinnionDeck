@@ -556,6 +556,38 @@ pub fn cancel() {
     DOWNLOAD.fetch_add(1, Ordering::SeqCst);
 }
 
+/// Every version the live marketplace lists is a plain version number, and every plugin's profile
+/// keeps all its pictures through the checks a profile's pictures now get.
+///     cargo test real_marketplace_passes_the_new_checks -- --ignored --nocapture
+#[cfg(test)]
+mod real_market_checks {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn real_marketplace_passes_the_new_checks() {
+        let text = fetch_index_text(&Source::default_source()).expect("the marketplace list");
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let root = std::env::temp_dir().join(format!("md-real-checks-{}", super::super::util::now_ms()));
+        fs::create_dir_all(&root).unwrap();
+        for p in v["plugins"].as_array().unwrap() {
+            let id = p["id"].as_str().unwrap();
+            let mut versions = vec![p["version"].as_str().unwrap_or("").to_string()];
+            versions.extend(p["versions"].as_array().into_iter().flatten().filter_map(|x| x["v"].as_str()).map(String::from));
+            for ver in &versions {
+                assert!(safe_version(ver), "{id}: version {ver:?} would be dropped");
+            }
+            if p.get("profile").is_some() {
+                let d = download_plugin_profile(&root, id).expect("its profile");
+                let all = super::super::profile_io::picture_counts(&d.path).unwrap();
+                println!("{id}: versions {versions:?}; profile pictures kept {}/{}", all.1, all.0);
+                assert_eq!(all.0, all.1, "{id}: a picture in its profile fails the checks");
+            }
+        }
+        let _ = fs::remove_dir_all(&root);
+    }
+}
+
 #[cfg(test)]
 mod safety_tests {
     use super::*;

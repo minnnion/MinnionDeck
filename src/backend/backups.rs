@@ -256,26 +256,51 @@ fn put_back(paths: &Paths, pkg: &package::Package) -> Result<(), String> {
 
 /// At start, before the library is read: a restore that stopped half-way is finished when its new
 /// pictures were already in place, else undone. Returns a message when something was put right.
+///
+/// Which step it reached is told by what is left: the backup's pictures still in a
+/// `media.restore-*` folder mean the folders were never swapped (so `media`, if there is one, may
+/// be an empty folder made since, and the old pictures go back); no such folder but a staged
+/// library means the pictures are in and only the library has to follow. Old pictures are removed
+/// only once the restore is known to be complete, and never while `media` is missing or empty.
 pub fn finish_interrupted_restore(paths: &Paths) -> Option<String> {
     let staged_lib = staged_library(paths);
     let olds = folders_named(paths, "media.old-");
+    let staged_media = folders_named(paths, "media.restore-");
+    let media_empty = fs::read_dir(&paths.media).map(|mut d| d.next().is_none()).unwrap_or(true);
+    // the old pictures back in place of a missing or empty media folder
+    let put_old_back = |old: &PathBuf| {
+        if paths.media.exists() {
+            let _ = fs::remove_dir(&paths.media);
+        }
+        fs::rename(old, &paths.media).is_ok()
+    };
     let mut said = None;
+    let mut complete = false;
     if staged_lib.exists() {
         if olds.is_empty() {
             // the pictures were never swapped: the restore didn't happen
             let _ = fs::remove_file(&staged_lib);
-        } else if !paths.media.exists() {
-            // stopped between the two folder renames: the old pictures go back
-            let _ = fs::rename(&olds[0], &paths.media);
-            let _ = fs::remove_file(&staged_lib);
-            said = Some("A restore was stopped part way. Your library was left as it was.".to_string());
+            complete = true;
+        } else if !staged_media.is_empty() {
+            // stopped between the two folder renames: the old pictures go back, nothing changed
+            if media_empty && put_old_back(&olds[0]) {
+                let _ = fs::remove_file(&staged_lib);
+                complete = true;
+                said = Some("A restore was stopped part way. Your library was left as it was.".to_string());
+            }
         } else if fs::rename(&staged_lib, paths.library_file()).is_ok() {
-            // the new pictures are in: the library goes with them
+            // the new pictures are in: the library goes with them, and only now do the old ones go
+            complete = true;
             said = Some("A restore was stopped part way and has been finished.".to_string());
         }
+    } else if !olds.is_empty() && media_empty {
+        // the pictures were moved aside and a failed restore couldn't move them back: they come back
+        complete = put_old_back(&olds[0]);
+    } else {
+        complete = true;
     }
-    // what is left from earlier tries
-    if !staged_lib.exists() && paths.media.exists() {
+    // what is left from earlier tries, once nothing in it can still be needed
+    if complete && paths.media.is_dir() && !staged_lib.exists() {
         for d in folders_named(paths, "media.old-").into_iter().chain(folders_named(paths, "media.restore-")) {
             let _ = fs::remove_dir_all(d);
         }
@@ -468,26 +493,42 @@ mod tests {
             vault::write(&staged_library(p), Kind::Save, br#"{"data":{"profiles":["new"]}}"#).unwrap();
             staged
         };
+        // the app makes its folders before it reads the library: recovery must cope with an empty
+        // media folder made since (the case that could lose pictures)
+        let start = |p: &Paths| {
+            p.make_folders().unwrap();
+            finish_interrupted_restore(p)
+        };
         // stopped before the pictures were swapped: as it was
         set_up(&p);
-        assert_eq!(finish_interrupted_restore(&p), None);
+        assert_eq!(start(&p), None);
         assert!(lib_says(&p).contains("old") && media::read_named(&p.media, "old.png").is_some());
         assert!(!staged_library(&p).exists() && folders_named(&p, "media.restore-").is_empty());
         // stopped between the folder renames: the old pictures come back
         let staged = set_up(&p);
         fs::rename(&p.media, p.library.join("media.old-1")).unwrap();
-        assert!(finish_interrupted_restore(&p).unwrap().contains("left as it was"));
-        assert!(lib_says(&p).contains("old") && media::read_named(&p.media, "old.png").is_some());
+        assert!(start(&p).unwrap().contains("left as it was"));
+        assert!(lib_says(&p).contains("old") && media::read_named(&p.media, "old.png").is_some(), "the old pictures are back");
         assert!(!staged.exists() && folders_named(&p, "media.old-").is_empty());
         // stopped after the pictures were swapped: the library follows them
         let staged = set_up(&p);
         fs::rename(&p.media, p.library.join("media.old-1")).unwrap();
         fs::rename(&staged, &p.media).unwrap();
-        assert!(finish_interrupted_restore(&p).unwrap().contains("finished"));
+        assert!(start(&p).unwrap().contains("finished"));
         assert!(lib_says(&p).contains("new") && media::read_named(&p.media, "new.png").is_some());
         assert!(folders_named(&p, "media.old-").is_empty());
+        // a failed restore that couldn't move the old pictures back (no staged library left): they
+        // come back, and nothing is deleted
+        set_up(&p);
+        let _ = fs::remove_file(staged_library(&p));
+        for d in folders_named(&p, "media.restore-") {
+            fs::remove_dir_all(d).unwrap();
+        }
+        fs::rename(&p.media, p.library.join("media.old-2")).unwrap();
+        assert_eq!(start(&p), None);
+        assert!(media::read_named(&p.media, "old.png").is_some(), "the only copy of the pictures was kept");
         // nothing to do: nothing happens
-        assert_eq!(finish_interrupted_restore(&p), None);
+        assert_eq!(start(&p), None);
         let _ = fs::remove_dir_all(&p.root);
     }
 

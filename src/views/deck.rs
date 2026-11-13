@@ -182,7 +182,7 @@ pub fn draw(app: &mut App, cv: &mut Cv, w: f32, h: f32) -> f32 {
     let slide = side_w - full;
 
     // ---- the pages panel ---------------------------------------------------------------------
-    let prof = app.sample.profiles[app.sample.active].clone();
+    let prof = app.sample.profiles.get(app.sample.active).cloned().unwrap_or_else(|| crate::backend::model::Profile { name: "Profile".into(), ..Default::default() });
     let sx = 12.0 + slide;
     let sw = full - 4.0 - 24.0;
     if side_w > 0.0 {

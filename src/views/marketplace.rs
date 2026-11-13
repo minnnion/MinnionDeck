@@ -99,7 +99,33 @@ fn state(app: &App, i: usize, now: f64) -> State {
     }
 }
 
-fn updates(app: &App) -> Vec<usize> {
+/// The line beside Check now: true when the list may be old because the last try failed.
+pub fn status_line(fetching: bool, error: Option<&str>, ok_at: Option<f64>, now: f64) -> (&'static str, bool) {
+    match (fetching, error, ok_at) {
+        (true, _, _) => ("Checking the Marketplace…", false),
+        (_, Some(_), _) => ("Couldn't reach the Marketplace: this list may be old", true),
+        (_, None, Some(t)) if now - t < 60.0 => ("Checked for updates just now", false),
+        (_, None, Some(_)) => ("Checked for updates today", false),
+        (_, None, None) => ("Showing the list saved last time", false),
+    }
+}
+
+/// What Check now says once the list has come back (or hasn't).
+pub fn refresh_message(r: &Result<usize, String>, updates: usize) -> String {
+    match r {
+        Ok(n) => {
+            let list = format!("{n} {} on the Marketplace", if *n == 1 { "plugin" } else { "plugins" });
+            match updates {
+                0 => format!("Everything is up to date. {list}"),
+                1 => format!("1 update is ready. {list}"),
+                u => format!("{u} updates are ready. {list}"),
+            }
+        }
+        Err(e) => format!("Couldn't check the Marketplace, so the list may be old. {e}"),
+    }
+}
+
+pub(crate) fn updates(app: &App) -> Vec<usize> {
     (0..market().len()).filter(|&i| installed(app, market()[i].id).map(|v| newer(market()[i].version, &v)).unwrap_or(false)).collect()
 }
 
@@ -319,11 +345,11 @@ pub fn draw(app: &mut App, cv: &mut Cv, w: f32, h: f32) -> f32 {
     let wc = cv.measure(13.0, 600, "Check now") + 24.0;
     if cv.button("mcheck", x + cw - wc, ty + 2.0, wc, 32.0, "Check now", o) {
         app.market_checked = now;
+        app.market_asked = true;
         app.start_market_refresh(true);
-        app.say(if ups.is_empty() { "Everything is up to date" } else { "Checked: updates are ready" }, now);
     }
-    let checked = if now - app.market_checked < 60.0 { "Checked for updates just now" } else { "Checked for updates today" };
-    cv.text_r(x + cw - wc - 12.0, ty + 9.0, 19.0, 13.0, 400, th.slate, checked);
+    let (checked, bad) = status_line(app.market_fetching, app.market_error.as_deref(), app.market_ok_at, now);
+    cv.text_r(x + cw - wc - 12.0, ty + 9.0, 19.0, 13.0, if bad { 600 } else { 400 }, if bad { th.coral_dark } else { th.slate }, checked);
 
     let top = ty + 42.0 + 20.0;
     let bottom = match app.market_tab {
@@ -886,4 +912,32 @@ pub fn dialog(app: &mut App, ui: &mut Ui, win: Rect) {
         d.closing = Some(now);
     }
     app.market_detail = Some(d);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // a refresh that failed must not look like a fresh list
+    #[test]
+    fn the_line_beside_check_now_says_when_the_list_may_be_old() {
+        assert_eq!(status_line(true, None, Some(0.0), 5.0), ("Checking the Marketplace…", false));
+        let (text, bad) = status_line(false, Some("Couldn't reach the marketplace."), Some(0.0), 5.0);
+        assert!(bad && text.contains("may be old"), "{text}");
+        assert_eq!(status_line(false, None, Some(100.0), 130.0), ("Checked for updates just now", false));
+        assert_eq!(status_line(false, None, Some(100.0), 900.0), ("Checked for updates today", false));
+        // never came in: not "checked"
+        assert_eq!(status_line(false, None, None, 900.0), ("Showing the list saved last time", false));
+    }
+
+    // Check now answers with what came back, not before
+    #[test]
+    fn check_now_says_what_the_check_found() {
+        assert_eq!(refresh_message(&Ok(7), 0), "Everything is up to date. 7 plugins on the Marketplace");
+        assert_eq!(refresh_message(&Ok(1), 1), "1 update is ready. 1 plugin on the Marketplace");
+        assert_eq!(refresh_message(&Ok(7), 3), "3 updates are ready. 7 plugins on the Marketplace");
+        let m = refresh_message(&Err("Couldn't reach the marketplace. Check your internet connection and try again.".into()), 0);
+        assert!(m.starts_with("Couldn't check the Marketplace") && m.contains("internet"), "{m}");
+        assert!(!m.contains("up to date"));
+    }
 }

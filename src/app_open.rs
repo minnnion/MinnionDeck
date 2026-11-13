@@ -17,6 +17,14 @@ pub struct InstallAsk {
     pub busy: bool,
 }
 
+/// The question asked before an author's key (.mdkey) is trusted.
+pub struct AuthorAsk {
+    pub info: plugins::AuthorInfo,
+    pub opened: Option<f64>,
+    pub closing: Option<f64>,
+    pub busy: bool,
+}
+
 /// The plugin id of a minniondeck://install?id=…&v=… link (browsers may add a slash, or encode it).
 pub fn link_plugin(link: &str) -> Option<String> {
     let link = link.trim();
@@ -39,6 +47,9 @@ impl App {
         let a = arg.trim().trim_matches('"');
         if a.is_empty() {
             return;
+        }
+        if let Some(cmd) = crate::backend::single::Command::decode(a) {
+            return self.run_command(cmd, now);
         }
         let lower = a.to_ascii_lowercase();
         if lower.starts_with("minniondeck:") {
@@ -97,11 +108,11 @@ impl App {
             return;
         }
         ask.busy = true;
-        let (id, fresh) = (ask.info.id.clone(), ask.info.installed.is_none());
+        let (id, fresh, sha) = (ask.info.id.clone(), ask.info.installed.is_none(), ask.info.sha.clone());
         let (path, tx, ctx) = (ask.path.clone(), self.io.tx.clone(), self.egui.clone());
         self.say("Installing…", now);
         std::thread::spawn(move || {
-            let result = plugins::install_from_file(&path);
+            let result = plugins::install_from_file(&path, &sha);
             let _ = tx.send(crate::app_io::IoMsg::PluginInstalled { result, id, fresh, file: path });
             ctx.request_repaint();
         });
@@ -109,23 +120,77 @@ impl App {
 
     // ----- an author's key -----
 
-    /// Trust an author…: choose a .mdkey file.
+    /// Trust an author…: choose a .mdkey file, then ask.
     pub fn start_author_pick(&mut self) {
         let (tx, ctx) = (self.io.tx.clone(), self.egui.clone());
         std::thread::spawn(move || {
             if let Some(path) = dialogs::open_file("Trust a plugin author", "Minniondeck author key", "mdkey") {
-                let _ = tx.send(crate::app_io::IoMsg::AuthorAdded(plugins::add_author(&path)));
+                let _ = tx.send(crate::app_io::IoMsg::AuthorRead(plugins::author_info(&path)));
                 ctx.request_repaint();
             }
         });
     }
 
+    /// A .mdkey that was double-clicked or handed over: it is only read, and the question asks.
     fn add_author_file(&mut self, path: PathBuf) {
         let (tx, ctx) = (self.io.tx.clone(), self.egui.clone());
         std::thread::spawn(move || {
-            let _ = tx.send(crate::app_io::IoMsg::AuthorAdded(plugins::add_author(&path)));
+            let _ = tx.send(crate::app_io::IoMsg::AuthorRead(plugins::author_info(&path)));
             ctx.request_repaint();
         });
+    }
+
+    /// The question's Trust button: trusts the key that was shown.
+    pub fn start_author_trust(&mut self) {
+        let Some(ask) = self.author_ask.as_mut().filter(|a| !a.busy) else { return };
+        ask.busy = true;
+        let (key, tx, ctx) = (ask.info.key.clone(), self.io.tx.clone(), self.egui.clone());
+        std::thread::spawn(move || {
+            let _ = tx.send(crate::app_io::IoMsg::AuthorAdded(plugins::trust_author(key)));
+            ctx.request_repaint();
+        });
+    }
+
+    // ----- the installer's commands, handed over because the app is running -----
+
+    /// Does what the installer asked (it would otherwise write the library or plugins behind this
+    /// copy's back). The library is changed here, on this thread; files are read on another.
+    fn run_command(&mut self, cmd: crate::backend::single::Command, now: f64) {
+        use crate::backend::single::Command;
+        let (tx, ctx, root, media) = (self.io.tx.clone(), self.egui.clone(), self.lib.paths.root.clone(), self.lib.paths.media.clone());
+        match cmd {
+            Command::InstallPlugin(file) => {
+                self.say("Installing a plugin…", now);
+                std::thread::spawn(move || {
+                    let r = plugins::install_file(&root, &file).and_then(|(m, _, _)| {
+                        plugins::log(&format!("Plugin {} {} installed (from setup)", m.id, m.version));
+                        plugins::reload(Some(m.id.clone()))?;
+                        Ok(m)
+                    });
+                    let id = r.as_ref().map(|m| m.id.clone()).unwrap_or_default();
+                    let _ = tx.send(crate::app_io::IoMsg::PluginInstalled { result: r.map(|m| m.name), id, fresh: false, file });
+                    ctx.request_repaint();
+                });
+            }
+            Command::AddProfileFile(file, picked) => {
+                std::thread::spawn(move || {
+                    let r = profile_io::import_from(&media, &file).map(|b| (b, None, picked));
+                    let _ = tx.send(crate::app_io::IoMsg::HandedProfile(r));
+                    ctx.request_repaint();
+                });
+            }
+            Command::AddProfile(id, picked) => {
+                std::thread::spawn(move || {
+                    let r = market::download_plugin_profile(&root, &id).and_then(|d| {
+                        let out = profile_io::import_from(&media, &d.path);
+                        let _ = std::fs::remove_file(&d.path);
+                        out.map(|b| (b, Some((id.clone(), d.plugin_name, d.sha)), picked))
+                    });
+                    let _ = tx.send(crate::app_io::IoMsg::HandedProfile(r));
+                    ctx.request_repaint();
+                });
+            }
+        }
     }
 
     // ----- a profile file -----

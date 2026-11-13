@@ -45,7 +45,17 @@ pub struct Library {
     backed_up: bool,
     /// "Back up when Minniondeck starts" (Settings › Backup)
     pub auto_backup: bool,
+    /// Why nothing may be written: the library file was there but couldn't be read
+    blocked: Option<String>,
+    /// When unused pictures were last cleared out
+    gc_at: Option<std::time::Instant>,
+    /// When `tick` last looked for changes, and whether a look is waiting
+    checked_at: f64,
+    check_due: bool,
 }
+
+/// How often `tick` looks for changes (it hashes every button)
+const CHECK_EVERY: f64 = 0.1;
 
 fn now_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
@@ -233,14 +243,40 @@ fn counts(tree: &[Value], boards: &Value) -> (usize, usize, usize) {
     c
 }
 
+/// What reading the library file found.
+enum Loaded {
+    Missing,
+    Doc(Value),
+    /// It was read but is damaged (can't be unsealed, or isn't a library): set aside
+    Damaged(String),
+    /// It couldn't be read at all (in use, no permission): left alone, and nothing is saved over it
+    Locked(String),
+}
+
+fn load(file: &Path, read: impl FnMut(&Path) -> std::io::Result<Vec<u8>>) -> Loaded {
+    match super::util::read_retrying_with(file, read) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Loaded::Missing,
+        Err(e) => Loaded::Locked(e.to_string()),
+        Ok(bytes) => match parse_doc(file, &bytes) {
+            Ok(d) => Loaded::Doc(d),
+            Err(e) => Loaded::Damaged(e),
+        },
+    }
+}
+
 /// Reads the library's "data" (from a sealed .mdsave file, or the plain library.json of the
 /// Minniondeck app), or says why it can't be used.
 fn read_doc(file: &Path) -> Result<Value, String> {
+    let bytes = super::util::read_retrying(file).map_err(|e| e.to_string())?;
+    parse_doc(file, &bytes)
+}
+
+fn parse_doc(file: &Path, bytes: &[u8]) -> Result<Value, String> {
     let v: Value = if super::vault::is_sealed(file) {
-        super::vault::read_json(file, super::package::Kind::Save)?
+        let plain = super::package::open(bytes, super::package::Kind::Save)?;
+        serde_json::from_slice(&plain).map_err(|e| format!("it isn't valid data ({e})"))?
     } else {
-        let text = std::fs::read_to_string(file).map_err(|e| e.to_string())?;
-        serde_json::from_str(&text).map_err(|e| format!("it isn't valid JSON ({e})"))?
+        serde_json::from_slice(bytes).map_err(|e| format!("it isn't valid JSON ({e})"))?
     };
     let data = v.get("data").cloned().unwrap_or(v);
     let ok = data.get("profiles").and_then(|p| p.as_array()).map(|p| !p.is_empty()).unwrap_or(false) && data.get("boards").map(|b| b.is_object()).unwrap_or(false);
@@ -275,6 +311,12 @@ fn copy_from_old_app(p: &Paths) -> bool {
 }
 
 impl Library {
+    /// A library over `doc` that never backs itself up, for tests.
+    #[cfg(test)]
+    pub(crate) fn for_test(paths: Paths, doc: Value) -> Library {
+        Library { paths, doc, loaded: String::new(), page_shown: 0, buttons: HashMap::new(), nodes: HashMap::new(), profiles_sig: 0, saved: 0, seen: 0, changed_at: 0.0, force: false, backed_up: true, auto_backup: true, blocked: None, gc_at: None, checked_at: f64::NEG_INFINITY, check_due: false }
+    }
+
     /// Finds the data folder, reads the library (copying yours from the Minniondeck app the first
     /// time) and returns it with what the window shows, plus a message for the user, if any.
     pub fn open() -> (Library, Sample, Option<String>) {
@@ -284,20 +326,29 @@ impl Library {
         if let Some(problem) = paths.migrate_legacy() {
             note = Some(problem);
         }
+        // a restore that stopped half-way (the PC went off) is finished or undone first
+        if let Some(problem) = super::backups::finish_interrupted_restore(&paths) {
+            note = Some(problem);
+        }
         let file = paths.library_file();
-        let doc = if file.exists() {
-            match read_doc(&file) {
-                Ok(d) => d,
-                Err(e) => {
-                    // keep the unreadable file aside, never overwrite it
-                    let aside = paths.library.join(format!("library-unreadable-{}.mdsave", now_ms()));
-                    let _ = std::fs::rename(&file, &aside);
-                    note = Some(format!("Your library couldn't be read ({e}). It was kept as {}.", aside.file_name().and_then(|n| n.to_str()).unwrap_or("")));
-                    default_doc()
-                }
+        let mut blocked = None;
+        let doc = match load(&file, |f: &Path| std::fs::read(f)) {
+            Loaded::Missing => default_doc(),
+            Loaded::Doc(d) => d,
+            Loaded::Damaged(e) => {
+                // keep the damaged file aside, never overwrite it
+                let aside = paths.library.join(format!("library-unreadable-{}.mdsave", now_ms()));
+                let _ = std::fs::rename(&file, &aside);
+                note = Some(format!("Your library couldn't be read ({e}). It was kept as {}.", aside.file_name().and_then(|n| n.to_str()).unwrap_or("")));
+                default_doc()
             }
-        } else {
-            default_doc()
+            Loaded::Locked(e) => {
+                // the file is fine as far as anyone knows: it must not be saved over with an empty library
+                let why = format!("Your library couldn't be opened ({e}). Another program may be using it. Nothing is saved until Minniondeck is started again.");
+                note = Some(why.clone());
+                blocked = Some(why);
+                default_doc()
+            }
         };
         let mut lib = Library {
             paths,
@@ -313,6 +364,10 @@ impl Library {
             force: false,
             backed_up: false,
             auto_backup: true,
+            blocked,
+            gc_at: None,
+            checked_at: f64::NEG_INFINITY,
+            check_due: false,
         };
         let mut s = Sample::empty();
         s.profiles = lib.profiles();
@@ -632,7 +687,15 @@ impl Library {
             self.store_pages(s);
             self.load_pages(s, "");
         }
-        // save a moment after the last change
+        // save a moment after the last change. Every button is hashed to see whether anything
+        // changed, so that is done at most 10 times a second; a check that waits keeps the window
+        // coming back (pending) until it is done, so no change is missed.
+        if now - self.checked_at < CHECK_EVERY && now >= self.checked_at {
+            self.check_due = true;
+            return None;
+        }
+        self.checked_at = now;
+        self.check_due = false;
         let fp = fingerprint(s);
         if fp != self.seen {
             self.seen = fp;
@@ -646,7 +709,7 @@ impl Library {
 
     /// A change is waiting to be saved (the window should look again soon).
     pub fn pending(&self) -> bool {
-        self.seen != self.saved || self.force
+        self.seen != self.saved || self.force || self.check_due
     }
 
     /// Writes everything now (when the window closes).
@@ -666,19 +729,38 @@ impl Library {
         if std::env::args().any(|a| a == "--shot") {
             return Ok(());
         }
+        if let Some(why) = &self.blocked {
+            return Err(why.clone());
+        }
         let file = self.paths.library_file();
         if !self.backed_up && file.exists() {
             self.backed_up = true;
             if self.auto_backup {
-                let _ = super::backups::create(&self.paths, super::backups::Reason::Startup);
+                // the file as it is now is read before it is written over; the backup is made beside
+                super::backups::create_in_background(&self.paths, super::backups::Reason::Startup);
             }
         }
         let text = serde_json::to_string(&json!({ "schema_version": 1, "saved_at": now_ms(), "data": self.doc })).map_err(|e| e.to_string())?;
-        super::vault::write(&file, super::package::Kind::Save, text.as_bytes()).map_err(|e| format!("Couldn't save your buttons: {e}"))
+        super::vault::write(&file, super::package::Kind::Save, text.as_bytes()).map_err(|e| format!("Couldn't save your buttons: {e}"))?;
+        // once the library is safely saved: pictures nothing uses any more go (at most every 10
+        // minutes, and not while a backup is reading them)
+        let backing_up = super::backups::BUSY.load(std::sync::atomic::Ordering::SeqCst) > 0;
+        if !backing_up && self.gc_at.is_none_or(|t| t.elapsed() > std::time::Duration::from_secs(600)) {
+            self.gc_at = Some(std::time::Instant::now());
+            let removed = super::media::collect_garbage(&self.paths.media, &self.doc);
+            if removed > 0 {
+                self.publish_media();
+            }
+        }
+        Ok(())
     }
 
     /// Tells backend/media.rs which pictures and GIFs the library has.
     pub fn publish_media(&self) {
+        // the lists are shared by the whole program: in tests only the media tests fill them, one at a time
+        if cfg!(test) {
+            return;
+        }
         super::media::set_from_doc(&self.doc, &self.paths.media, &self.paths.root.join("plugins"));
     }
 
@@ -732,6 +814,58 @@ impl Library {
             self.doc["profiles"][i]["trusted"] = json!(true);
             self.force = true;
         }
+    }
+
+    /// The plugin whose ready-made profile profile `idx` is (its steps came with a plugin the
+    /// user installed, so they don't ask).
+    fn own_plugin(&self, idx: usize) -> Option<String> {
+        self.doc["profiles"][idx].get("from").map(|f| str_of(f, "plugin").to_string()).filter(|p| !p.is_empty())
+    }
+
+    /// Whether a button of the profile in use asks "Allow imported buttons?" before these steps
+    /// run: the profile came from a file, wasn't allowed yet, and a step acts (actions::step_asks).
+    pub fn asks_before(&self, steps: &[Step]) -> bool {
+        self.needs_trust() && self.profile_index(&self.loaded).is_some_and(|i| super::actions::risky(steps, self.own_plugin(i).as_deref()))
+    }
+
+    /// Every step of profile `idx` that asks, as (kind, settings), in the order of its pages.
+    fn asking_steps(&self, idx: usize) -> Vec<Step> {
+        let own = self.own_plugin(idx);
+        let mut rows = vec![];
+        flatten(self.doc["profiles"][idx].get("tree").and_then(|t| t.as_array()).map(|t| t.as_slice()).unwrap_or(&[]), 0, &mut rows, &mut HashMap::new());
+        let mut out = vec![];
+        for r in rows.iter().filter(|r| !r.folder) {
+            for b in self.doc["boards"].get(&r.board).and_then(|b| b.as_array()).into_iter().flatten() {
+                for st in b.get("steps").and_then(|s| s.as_array()).into_iter().flatten() {
+                    let step = Step { kind: str_of(st, "type").into(), fields: st.get("f").cloned().unwrap_or_else(|| json!({})) };
+                    if super::actions::step_asks(&step, own.as_deref()) {
+                        out.push(step);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// What the buttons of the profile in use do that asks first, in words, each thing once
+    /// (for the "Allow imported buttons?" question).
+    pub fn asking_lines(&self) -> Vec<String> {
+        let mut out: Vec<String> = vec![];
+        for s in self.profile_index(&self.loaded).map(|i| self.asking_steps(i)).unwrap_or_default() {
+            let line = super::actions::describe(&s);
+            if !out.contains(&line) {
+                out.push(line);
+            }
+        }
+        out
+    }
+
+    /// The asking steps of profile `idx` as one sorted list, to see whether an update changed them.
+    fn asking_signature(&self, idx: usize) -> Vec<String> {
+        let mut sig: Vec<String> = self.asking_steps(idx).iter().map(|s| format!("{} {}", s.kind, s.fields)).collect();
+        sig.sort();
+        sig.dedup();
+        sig
     }
 }
 
@@ -851,13 +985,20 @@ impl Library {
     pub fn add_profile_file(path: &Path, picked: Option<&[String]>) -> Result<String, String> {
         let (mut lib, mut s, _) = Library::open();
         let bundle = super::profile_io::import_from(&lib.paths.media, path)?;
-        // with choices, only the chosen pages (none named: all)
-        let bundle = match picked {
-            Some(p) if !choices_of(&bundle).is_empty() => with_choices(&bundle, p),
-            _ => bundle,
-        };
-        let name = Library::add_profile_file_to(&mut lib, &mut s, &bundle)?;
+        let name = lib.add_profile_bundle(&mut s, &bundle, picked)?;
         lib.write()?;
+        Ok(name)
+    }
+
+    /// add_profile_file on a library that is open (the running app, handed the installer's command).
+    pub fn add_profile_bundle(&mut self, s: &mut Sample, bundle: &Value, picked: Option<&[String]>) -> Result<String, String> {
+        // with choices, only the chosen pages (none named: all)
+        let chosen = match picked {
+            Some(p) if !choices_of(bundle).is_empty() => Some(with_choices(bundle, p)),
+            _ => None,
+        };
+        let name = Library::add_profile_file_to(self, s, chosen.as_ref().unwrap_or(bundle))?;
+        self.force = true;
         Ok(name)
     }
 
@@ -893,7 +1034,7 @@ impl Library {
     /// Returns (the new profile's name, pages, buttons).
     pub fn import_bundle(&mut self, s: &mut Sample, b: &Value) -> Result<(String, usize, usize), String> {
         self.store_pages(s);
-        let _ = super::backups::create(&self.paths, super::backups::Reason::BeforeImport);
+        super::backups::create_in_background(&self.paths, super::backups::Reason::BeforeImport);
         let mut refs: HashMap<String, String> = HashMap::new();
         for key in ["drawnGifs", "gifFiles", "images", "designs"] {
             if !self.doc.get(key).is_some_and(|v| v.is_array()) {
@@ -1384,8 +1525,13 @@ impl Library {
         if list.len() != before + 1 {
             return Err("The new profile couldn't be read.".into());
         }
-        let temp = list.pop().expect("the new profile");
         let idx = list.iter().position(|p| str_of(p, "id") == id).ok_or("That profile isn't in the library any more.")?;
+        // what its buttons did that needed allowing, before and after (the new one is still the last profile)
+        let (asked_before, asked_after) = (self.asking_signature(idx), {
+            self.doc["profiles"][before]["from"] = json!({ "plugin": plugin });
+            self.asking_signature(before)
+        });
+        let temp = list.pop().expect("the new profile");
         // ... then its pages take the old ones' place, and the old boards go
         let mut rows = vec![];
         flatten(list[idx].get("tree").and_then(|t| t.as_array()).map(|t| t.as_slice()).unwrap_or(&[]), 0, &mut rows, &mut HashMap::new());
@@ -1397,6 +1543,11 @@ impl Library {
         list[idx]["tree"] = temp["tree"].clone();
         list[idx]["needs"] = temp["needs"].clone();
         list[idx]["imported"] = json!(true);
+        // an update that changes what the buttons do on the PC (a new program to open, other keys
+        // to press, another plugin's action) has to be allowed again: "Allow" was for the old ones
+        if asked_after.iter().any(|s| !asked_before.contains(s)) {
+            list[idx]["trusted"] = json!(false);
+        }
         let name = str_of(&list[idx], "name").to_string();
         self.doc["profiles"] = Value::Array(list);
         let base = self.profile_hash(idx);
@@ -1487,17 +1638,24 @@ impl Library {
     pub fn add_plugin_profile(path: &Path, plugin: &str, plugin_name: &str, sha: &str, picked: Option<&[String]>) -> Result<String, String> {
         let (mut lib, mut s, _) = Library::open();
         let bundle = super::profile_io::import_from(&lib.paths.media, path)?;
+        let said = lib.add_plugin_profile_bundle(&mut s, &bundle, plugin, plugin_name, sha, picked)?;
+        lib.write()?;
+        Ok(said)
+    }
+
+    /// add_plugin_profile on a library that is open (the running app, handed the installer's
+    /// command). Saved with the library's next save.
+    pub fn add_plugin_profile_bundle(&mut self, s: &mut Sample, bundle: &Value, plugin: &str, plugin_name: &str, sha: &str, picked: Option<&[String]>) -> Result<String, String> {
+        let lib = self;
         if lib.plugin_profiles(plugin, plugin_name, true).is_empty() {
             // with choices, only the chosen pages (none named: all of them)
-            let picked: Option<Vec<String>> = if choices_of(&bundle).is_empty() { None } else { Some(picked.map(|p| p.to_vec()).unwrap_or_else(|| choices_of(&bundle).into_iter().map(|c| c.0).collect())) };
-            let chosen = picked.as_ref().map(|p| with_choices(&bundle, p));
-            let name = Library::add_profile_file_to(&mut lib, &mut s, chosen.as_ref().unwrap_or(&bundle))?;
+            let picked: Option<Vec<String>> = if choices_of(bundle).is_empty() { None } else { Some(picked.map(|p| p.to_vec()).unwrap_or_else(|| choices_of(bundle).into_iter().map(|c| c.0).collect())) };
+            let chosen = picked.as_ref().map(|p| with_choices(bundle, p));
+            let name = Library::add_profile_file_to(lib, s, chosen.as_ref().unwrap_or(bundle))?;
             lib.link_last_profile_picked(plugin, sha, picked.as_deref());
-            lib.write()?;
             return Ok(format!("{name} added"));
         }
-        let done = lib.plugin_profile_changed(&mut s, plugin, plugin_name, true, &bundle, sha);
-        lib.write()?;
+        let done = lib.plugin_profile_changed(s, plugin, plugin_name, true, bundle, sha);
         let said: Vec<String> = done
             .iter()
             .map(|d| match d {
@@ -1610,19 +1768,8 @@ mod tests {
         assert_eq!(t.colour, "#112233");
         assert_eq!(t.action, "key");
         let lib = Library {
-            paths: Paths::find(),
-            doc: json!({ "profiles": [], "boards": {}, "designs": [designs["d1"].clone()] }),
-            loaded: String::new(),
-            page_shown: 0,
             buttons: [("t1".to_string(), b.clone())].into(),
-            nodes: HashMap::new(),
-            profiles_sig: 0,
-            saved: 0,
-            seen: 0,
-            changed_at: 0.0,
-            force: false,
-            backed_up: true,
-            auto_backup: true,
+            ..Library::for_test(Paths::find(), json!({ "profiles": [], "boards": {}, "designs": [designs["d1"].clone()] }))
         };
         // unchanged: the same button comes back
         assert_eq!(lib.button_to_real(&t, &HashMap::new(), &designs), b);
@@ -1644,21 +1791,7 @@ mod media_looks {
     use super::*;
 
     fn lib_with(b: &Value) -> Library {
-        Library {
-            paths: Paths::find(),
-            doc: json!({ "profiles": [], "boards": {}, "designs": [] }),
-            loaded: String::new(),
-            page_shown: 0,
-            buttons: [(str_of(b, "id").to_string(), b.clone())].into(),
-            nodes: HashMap::new(),
-            profiles_sig: 0,
-            saved: 0,
-            seen: 0,
-            changed_at: 0.0,
-            force: false,
-            backed_up: true,
-            auto_backup: true,
-        }
+        Library { buttons: [(str_of(b, "id").to_string(), b.clone())].into(), ..Library::for_test(Paths::find(), json!({ "profiles": [], "boards": {}, "designs": [] })) }
     }
 
     #[test]
@@ -1726,7 +1859,7 @@ mod profile_files {
             "drawnGifs": [{ "id": "g1", "name": "Blink" }], "gifFiles": [], "images": [{ "id": "u:1", "media": "x.png" }],
             "active": {}
         });
-        let mut lib = Library { paths, doc, loaded: String::new(), page_shown: 0, buttons: HashMap::new(), nodes: HashMap::new(), profiles_sig: 0, saved: 0, seen: 0, changed_at: 0.0, force: false, backed_up: true, auto_backup: true };
+        let mut lib = Library::for_test(paths, doc);
         let mut s = Sample::empty();
         s.profiles = lib.profiles();
         let b = lib.bundle_for(&mut s, "pr1").unwrap();
@@ -1740,7 +1873,7 @@ mod profile_files {
         // through the file format and back in
         let bytes = super::super::profile_io::build(&lib.paths.media, &b);
         assert!(bytes.is_err(), "the picture file x.png isn't in the media folder");
-        std::fs::write(lib.paths.media.join("x.png"), [1u8, 2, 3]).unwrap();
+        std::fs::write(lib.paths.media.join("x.png"), crate::backend::media::tiny_png()).unwrap();
         let file = lib.paths.root.join("Stream.mdprofile");
         super::super::profile_io::export_to(&lib.paths.media, &b, &file).unwrap();
         let back = super::super::profile_io::import_from(&lib.paths.media, &file).unwrap();
@@ -1796,7 +1929,7 @@ mod profile_files {
         let dir = std::env::temp_dir().join(format!("md-lib-real-{}", now_ms()));
         let paths = Paths { root: dir.clone(), library: dir.join("library"), media: dir.join("library").join("media"), backups: dir.join("backups") };
         paths.make_folders().unwrap();
-        let mut lib = Library { paths, doc: default_doc(), loaded: String::new(), page_shown: 0, buttons: HashMap::new(), nodes: HashMap::new(), profiles_sig: 0, saved: 0, seen: 0, changed_at: 0.0, force: false, backed_up: true, auto_backup: true };
+        let mut lib = Library::for_test(paths, default_doc());
         let mut s = Sample::empty();
         s.profiles = lib.profiles();
         lib.load_pages(&mut s, "");
@@ -1814,12 +1947,87 @@ mod profile_files {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    // a change is never missed, even when the look for changes waits
+    #[test]
+    fn a_change_is_saved_even_when_the_check_waits() {
+        let dir = std::env::temp_dir().join(format!("md-lib-tick-{}", now_ms()));
+        let paths = Paths { root: dir.clone(), library: dir.join("library"), media: dir.join("library").join("media"), backups: dir.join("backups") };
+        paths.make_folders().unwrap();
+        let mut lib = Library::for_test(paths, default_doc());
+        let mut s = Sample::empty();
+        s.profiles = lib.profiles();
+        lib.load_pages(&mut s, "");
+        lib.saved = fingerprint(&s);
+        lib.seen = lib.saved;
+        assert!(lib.tick(&mut s, 1.0).is_none() && !lib.pending());
+        // a change right after a look: this frame doesn't look, but says there is more to do
+        s.pages[0].name = "Renamed".into();
+        assert!(lib.tick(&mut s, 1.05).is_none());
+        assert!(lib.pending(), "the window comes back to look");
+        lib.tick(&mut s, 1.2);
+        assert!(lib.pending(), "seen, waiting its moment");
+        lib.tick(&mut s, 2.0);
+        assert!(!lib.pending(), "saved");
+        assert!(read_doc(&lib.paths.library_file()).unwrap().to_string().contains("Renamed"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // "Allow imported buttons?" was answered for the buttons as they were: an update that brings
+    // new things to do on the PC has to be allowed again
+    #[test]
+    fn an_update_that_adds_things_to_do_on_the_pc_asks_again() {
+        let dir = std::env::temp_dir().join(format!("md-lib-retrust-{}", now_ms()));
+        let paths = Paths { root: dir.clone(), library: dir.join("library"), media: dir.join("library").join("media"), backups: dir.join("backups") };
+        paths.make_folders().unwrap();
+        let mut lib = Library::for_test(paths, default_doc());
+        let mut s = Sample::empty();
+        s.profiles = lib.profiles();
+        lib.load_pages(&mut s, "");
+        lib.import_bundle(&mut s, &plugin_bundle(&["Play"])).unwrap();
+        lib.link_last_profile("minnion_spotify", "sha1");
+        let id = lib.doc["profiles"][1]["id"].as_str().unwrap().to_string();
+        s.active = 1;
+        lib.tick(&mut s, 0.0);
+        let play = Step { kind: "plug:minnion_spotify:play".into(), fields: json!({}) };
+        let run = Step { kind: "run".into(), fields: json!({ "path": "cmd.exe" }) };
+        // its own plugin's buttons never ask; anything else in it does, until it is allowed
+        assert!(lib.needs_trust());
+        assert!(!lib.asks_before(std::slice::from_ref(&play)));
+        assert!(lib.asks_before(std::slice::from_ref(&run)));
+        assert!(lib.asks_before(&[Step { kind: "plug:other_plugin:do".into(), fields: json!({}) }]));
+        lib.trust();
+        assert!(!lib.asks_before(std::slice::from_ref(&run)));
+
+        // more of its own plugin's buttons: still allowed
+        lib.replace_profile(&mut s, &id, &plugin_bundle(&["Play", "Next"]), "minnion_spotify", "sha2").unwrap();
+        assert_eq!(lib.doc["profiles"][1]["trusted"], true);
+
+        // a button that opens a program, or uses another plugin: asks again, and says what
+        let mut evil = plugin_bundle(&["Play", "Next"]);
+        evil["profile"]["tree"][0]["buttons"][1]["steps"] = json!([{ "type": "plug:minnion_spotify:play", "f": {} }, { "type": "run", "f": { "path": "cmd.exe", "args": "/c calc" } }]);
+        lib.replace_profile(&mut s, &id, &evil, "minnion_spotify", "sha3").unwrap();
+        assert_eq!(lib.doc["profiles"][1]["trusted"], false);
+        assert!(lib.asks_before(std::slice::from_ref(&run)));
+        assert_eq!(lib.asking_lines(), vec!["Open cmd.exe /c calc".to_string()]);
+        lib.trust();
+        // the same again, or fewer: nothing new to allow
+        lib.replace_profile(&mut s, &id, &evil, "minnion_spotify", "sha4").unwrap();
+        lib.replace_profile(&mut s, &id, &plugin_bundle(&["Play"]), "minnion_spotify", "sha5").unwrap();
+        assert_eq!(lib.doc["profiles"][1]["trusted"], true);
+        let mut other = plugin_bundle(&["Play"]);
+        other["profile"]["tree"][0]["buttons"][0]["steps"] = json!([{ "type": "plug:minnion_obs:scene", "f": { "scene": "x" } }]);
+        lib.replace_profile(&mut s, &id, &other, "minnion_spotify", "sha6").unwrap();
+        assert_eq!(lib.doc["profiles"][1]["trusted"], false);
+        assert_eq!(lib.doc["profiles"].as_array().unwrap().len(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn removing_a_plugin_makes_the_next_install_ask_again() {
         let dir = std::env::temp_dir().join(format!("md-lib-again-{}", now_ms()));
         let paths = Paths { root: dir.clone(), library: dir.join("library"), media: dir.join("library").join("media"), backups: dir.join("backups") };
         paths.make_folders().unwrap();
-        let mut lib = Library { paths, doc: default_doc(), loaded: String::new(), page_shown: 0, buttons: HashMap::new(), nodes: HashMap::new(), profiles_sig: 0, saved: 0, seen: 0, changed_at: 0.0, force: false, backed_up: true, auto_backup: true };
+        let mut lib = Library::for_test(paths, default_doc());
         let mut s = Sample::empty();
         s.profiles = lib.profiles();
         lib.load_pages(&mut s, "");
@@ -1856,7 +2064,7 @@ mod profile_files {
         let dir = std::env::temp_dir().join(format!("md-lib-plug-{}", now_ms()));
         let paths = Paths { root: dir.clone(), library: dir.join("library"), media: dir.join("library").join("media"), backups: dir.join("backups") };
         paths.make_folders().unwrap();
-        let mut lib = Library { paths, doc: default_doc(), loaded: String::new(), page_shown: 0, buttons: HashMap::new(), nodes: HashMap::new(), profiles_sig: 0, saved: 0, seen: 0, changed_at: 0.0, force: false, backed_up: true, auto_backup: true };
+        let mut lib = Library::for_test(paths, default_doc());
         let mut s = Sample::empty();
         s.profiles = lib.profiles();
         lib.load_pages(&mut s, "");
@@ -1962,7 +2170,7 @@ mod real_file {
         let paths = Paths::find();
         let _ = paths.migrate_legacy();
         let doc = read_doc(&paths.library_file()).expect("build/library/library.mdsave");
-        let mut lib = Library { paths, doc: doc.clone(), loaded: String::new(), page_shown: 0, buttons: HashMap::new(), nodes: HashMap::new(), profiles_sig: 0, saved: 0, seen: 0, changed_at: 0.0, force: false, backed_up: true, auto_backup: true };
+        let mut lib = Library::for_test(paths, doc.clone());
         let mut s = Sample::empty();
         s.profiles = lib.profiles();
         for i in 0..s.profiles.len() {
@@ -2043,6 +2251,45 @@ fn fn_first_page(tree: Option<&Value>) -> String {
         }
     }
     String::new()
+}
+
+#[cfg(test)]
+mod opening {
+    use super::*;
+
+    fn dir(tag: &str) -> Paths {
+        let d = std::env::temp_dir().join(format!("md-lib-open-{tag}-{}", now_ms()));
+        let p = Paths { root: d.clone(), library: d.join("library"), media: d.join("library").join("media"), backups: d.join("backups") };
+        p.make_folders().unwrap();
+        p
+    }
+
+    // a file Windows says is in use for a moment is read once it's free; one that stays in use is
+    // never taken for a damaged one (it isn't set aside, and an empty library isn't saved over it)
+    #[test]
+    fn a_library_in_use_is_waited_for_and_never_set_aside() {
+        let p = dir("busy");
+        let file = p.library_file();
+        super::super::vault::write(&file, super::super::package::Kind::Save, br#"{"data":{"profiles":[{"id":"a","name":"A","tree":[]}],"boards":{}}}"#).unwrap();
+        let busy = || std::io::Error::from_raw_os_error(32); // ERROR_SHARING_VIOLATION
+        let mut tries = 0;
+        let got = load(&file, |f| {
+            tries += 1;
+            if tries < 3 { Err(busy()) } else { std::fs::read(f) }
+        });
+        assert!(matches!(got, Loaded::Doc(ref d) if d["profiles"][0]["name"] == "A"), "read after it came free");
+        assert!(matches!(load(&file, |_| Err(busy())), Loaded::Locked(_)));
+        assert!(matches!(load(&p.library.join("none.mdsave"), |f: &Path| std::fs::read(f)), Loaded::Missing));
+        // damaged: that one is set aside
+        std::fs::write(&file, b"MINNIONDECK\x02\x03not really").unwrap();
+        assert!(matches!(load(&file, |f: &Path| std::fs::read(f)), Loaded::Damaged(_)));
+        // a library that couldn't be read refuses to save, and the file stays as it was
+        let mut lib = Library::for_test(p.clone(), default_doc());
+        lib.blocked = Some("in use".into());
+        assert_eq!(lib.write().unwrap_err(), "in use");
+        assert_eq!(std::fs::read(&file).unwrap(), b"MINNIONDECK\x02\x03not really");
+        let _ = std::fs::remove_dir_all(&p.root);
+    }
 }
 
 #[cfg(test)]

@@ -37,6 +37,7 @@ const MAP: &[(&str, &str, Kind)] = &[
     ("conn", "conn", Kind::Choice(&["wifi", "usb", "both"])),
     ("match", "pin", Kind::Switch),
     ("secure", "securePhoneLink", Kind::Switch),
+    ("plain", "plainPhoneLink", Kind::Switch),
     ("follow", "followPc", Kind::Switch),
     ("awake", "awake", Kind::Switch),
     ("vibe", "haptics", Kind::Switch),
@@ -57,6 +58,10 @@ pub struct SettingsFile {
     changed_at: f64,
     /// The Profiles page's switch and the Settings page's, kept as one
     pub prev_auto: bool,
+    /// The file was there but couldn't be read: nothing is written over it this session
+    blocked: bool,
+    /// What to tell the user about reading the file, once
+    pub note: Option<String>,
 }
 
 fn value_of(kind: &Kind, n: usize) -> Value {
@@ -74,11 +79,33 @@ fn number_of(kind: &Kind, v: &Value) -> Option<usize> {
 }
 
 impl SettingsFile {
-    /// Reads settings.json (a missing or unreadable one is the defaults). `live` false makes it inert.
+    /// Reads the settings (a missing one is the defaults). A damaged file is kept aside under
+    /// another name; one that can't be read at all (in use) is left alone and not written over.
+    /// `live` false makes it inert.
     pub fn open(paths: &Paths, live: bool) -> SettingsFile {
         let path = paths.settings_file();
-        let data = read_data(paths).and_then(|d| d.as_object().cloned()).unwrap_or_default();
-        SettingsFile { path, data, live, seen: 0, changed_at: 0.0, prev_auto: true }
+        let mut f = SettingsFile { path: path.clone(), data: Map::new(), live, seen: 0, changed_at: 0.0, prev_auto: true, blocked: false, note: None };
+        if !live {
+            f.data = read_data(paths).and_then(|d| d.as_object().cloned()).unwrap_or_default();
+            return f;
+        }
+        let _ = super::vault::migrate(&paths.legacy_settings_file(), &path, super::package::Kind::Save);
+        match super::util::read_retrying(&path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                f.blocked = true;
+                f.note = Some(format!("Your settings couldn't be opened ({e}). They aren't saved until Minniondeck is started again."));
+            }
+            Ok(bytes) => match parse_data(&bytes) {
+                Some(d) => f.data = d,
+                None => {
+                    let aside = path.with_file_name(format!("settings-unreadable-{}.mdsave", now_ms()));
+                    let _ = std::fs::rename(&path, &aside);
+                    f.note = Some(format!("Your settings couldn't be read, so they start as new. The old file was kept as {}.", aside.file_name().and_then(|n| n.to_str()).unwrap_or("")));
+                }
+            },
+        }
+        f
     }
 
     /// Puts what the file holds into the window's settings.
@@ -154,6 +181,9 @@ impl SettingsFile {
     }
 
     fn write(&self) -> Result<(), String> {
+        if self.blocked {
+            return Err("Your settings couldn't be opened when Minniondeck started, so changes aren't saved until it starts again.".into());
+        }
         let text = serde_json::to_string(&json!({ "schema_version": 1, "saved_at": now_ms(), "data": self.data })).map_err(|e| e.to_string())?;
         super::vault::write(&self.path, super::package::Kind::Save, text.as_bytes()).map_err(|e| format!("Couldn't save your settings: {e}"))
     }
@@ -208,6 +238,31 @@ mod tests {
         let _ = std::fs::remove_dir_all(&paths.root);
     }
 
+    // a damaged settings file is kept aside, not written over with the defaults
+    #[test]
+    fn a_damaged_settings_file_is_kept_aside() {
+        let paths = temp_paths("damaged");
+        std::fs::write(paths.settings_file(), b"MINNIONDECK\x02\x03damaged").unwrap();
+        let mut f = SettingsFile::open(&paths, true);
+        assert!(f.note.as_deref().unwrap_or("").contains("settings-unreadable-"), "{:?}", f.note);
+        let kept: Vec<_> = std::fs::read_dir(&paths.root).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().starts_with("settings-unreadable-")).collect();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(std::fs::read(kept[0].path()).unwrap(), b"MINNIONDECK\x02\x03damaged");
+        // the new settings save normally beside it
+        let mut st = HashMap::new();
+        st.insert("theme", 1);
+        assert!(f.tick(&st, 1.0).is_none() && f.tick(&st, 2.0).is_none());
+        assert!(paths.settings_file().is_file());
+        // a file that can't be opened isn't written over
+        let mut blocked = SettingsFile::open(&paths, true);
+        blocked.blocked = true;
+        st.insert("theme", 2);
+        assert!(blocked.tick(&st, 1.0).is_none());
+        assert!(blocked.tick(&st, 2.0).is_some(), "it says it couldn't save");
+        assert_eq!(SettingsFile::open(&paths, true).data.get("theme").and_then(|v| v.as_str()), Some("light"));
+        let _ = std::fs::remove_dir_all(&paths.root);
+    }
+
     #[test]
     fn a_screenshot_never_reads_or_writes_settings() {
         let paths = temp_paths("shot");
@@ -223,6 +278,13 @@ mod tests {
 /// "Start minimised to the tray", read before the window is made.
 pub fn start_in_tray_setting() -> bool {
     read_data(&Paths::find()).and_then(|d| d.get("tray").and_then(|b| b.as_bool())).unwrap_or(false)
+}
+
+/// The "data" of the settings file's bytes, or None when they are damaged.
+fn parse_data(sealed: &[u8]) -> Option<Map<String, Value>> {
+    let plain = super::package::open(sealed, super::package::Kind::Save).ok()?;
+    let v: Value = serde_json::from_slice(&plain).ok()?;
+    v.get("data").and_then(|d| d.as_object()).cloned()
 }
 
 /// The settings file's "data": from the sealed file, or the plain one an earlier version left

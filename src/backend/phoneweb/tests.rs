@@ -1,6 +1,6 @@
 //! The phone server, tried with a real TLS and WebSocket client on this PC.
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{IpAddr, Ipv4Addr, TcpStream};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
@@ -46,15 +46,20 @@ fn tls(port: u16) -> Tls {
     StreamOwned::new(ClientConnection::new(Arc::new(cfg), ServerName::try_from("localhost").unwrap()).unwrap(), tcp)
 }
 
-/// GET over https: (status line, body)
-fn get(port: u16, path: &str) -> (String, Vec<u8>) {
+/// A request over https: (the answer's headers, its body)
+fn ask(port: u16, method: &str, path: &str) -> (String, Vec<u8>) {
     let mut s = tls(port);
-    write!(s, "GET {path} HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
+    write!(s, "{method} {path} HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
     let mut all = Vec::new();
     let _ = s.read_to_end(&mut all);
     let split = all.windows(4).position(|w| w == b"\r\n\r\n").unwrap_or(all.len());
-    let head = String::from_utf8_lossy(&all[..split]).into_owned();
-    (head.lines().next().unwrap_or("").to_string(), all.get(split + 4..).unwrap_or(&[]).to_vec())
+    (String::from_utf8_lossy(&all[..split]).into_owned(), all.get(split + 4..).unwrap_or(&[]).to_vec())
+}
+
+/// GET over https: (status line, body)
+fn get(port: u16, path: &str) -> (String, Vec<u8>) {
+    let (head, body) = ask(port, "GET", path);
+    (head.lines().next().unwrap_or("").to_string(), body)
 }
 
 fn ws(port: u16) -> WebSocket<Tls> {
@@ -81,7 +86,11 @@ fn want(w: &mut WebSocket<Tls>, t: &str) -> Value {
 fn server(tag: &str) -> (Arc<Hub>, Receiver<PhoneEvent>, PathBuf) {
     let root = std::env::temp_dir().join(format!("md-phone-{tag}-{}", now_ms()));
     let (tx, rx) = channel();
-    let hub = start(&root, 49000 + (now_ms() % 500) as u16, tx, || {}).expect("the phone server starts");
+    // each test server gets its own stretch of ports, so servers started at once don't crowd each other
+    static NEXT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+    let slot = NEXT.fetch_add(1, Ordering::Relaxed) % 40;
+    let base = 41000 + (std::process::id() % 50) as u16 * 400 + slot * 10;
+    let hub = start(&root, base, tx, || {}).expect("the phone server starts");
     (hub, rx, root)
 }
 
@@ -98,8 +107,18 @@ fn the_page_is_served_and_pictures_need_a_paired_phone() {
     assert_eq!(get(hub.tls_port, "/font-600.ttf").0, "HTTP/1.1 200 OK");
     // pictures: not without a paired phone's key
     assert_eq!(get(hub.tls_port, "/icon?id=play&c=ff0000").0, "HTTP/1.1 403 Forbidden");
-    assert_eq!(get(hub.tls_port, "/media?id=x&t=nope").0, "HTTP/1.1 403 Forbidden");
+    assert_eq!(get(hub.tls_port, "/media?id=x&k=nope").0, "HTTP/1.1 403 Forbidden");
     assert_eq!(get(hub.tls_port, "/nothing-here").0, "HTTP/1.1 404 Not Found");
+    // HEAD: the same headers, and no body
+    let (head, body) = ask(hub.tls_port, "HEAD", "/");
+    assert!(head.starts_with("HTTP/1.1 200 OK") && body.is_empty(), "{head} / {} bytes", body.len());
+    assert!(head.contains(&format!("Content-Length: {}", super::server::index_len_for_tests())), "{head}");
+    // the page can't be framed, sends no referrer, and runs only its own script
+    let lower = head.to_ascii_lowercase();
+    for want in ["x-frame-options: deny", "referrer-policy: no-referrer", "x-content-type-options: nosniff", "content-security-policy: default-src 'none'", "frame-ancestors 'none'", "script-src 'sha256-"] {
+        assert!(lower.contains(want), "no {want} in {head}");
+    }
+    assert!(!lower.contains("unsafe-inline") && !lower.contains("unsafe-eval"), "{head}");
     // http:// on the port goes to https://
     let mut plain = TcpStream::connect(("127.0.0.1", hub.tls_port)).unwrap();
     plain.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
@@ -124,8 +143,9 @@ fn http_get(port: u16, path: &str) -> (String, Vec<u8>) {
 #[test]
 fn too_many_connections_at_once_are_closed_and_places_come_back() {
     let (hub, _rx, root) = server("cap");
-    // fill every place with connections that say nothing (half on each port)
-    let held: Vec<TcpStream> = (0..super::server::MAX_CONNECTIONS)
+    hub.plain_ok.store(true, Ordering::Relaxed);
+    // one address fills its share with connections that say nothing (half on each port)
+    let held: Vec<TcpStream> = (0..super::server::MAX_PER_ADDRESS)
         .map(|i| TcpStream::connect(("127.0.0.1", if i % 2 == 0 { hub.port } else { hub.tls_port })).unwrap())
         .collect();
     std::thread::sleep(Duration::from_millis(300));
@@ -147,15 +167,155 @@ fn too_many_connections_at_once_are_closed_and_places_come_back() {
 }
 
 #[test]
+fn places_are_counted_for_each_address_and_all_together() {
+    use super::server::{MAX_CONNECTIONS, MAX_PER_ADDRESS, Places};
+    let places = Arc::new(Places::default());
+    let ip = |n: u8| IpAddr::V4(Ipv4Addr::new(192, 168, 1, n));
+    // one address can't take more than its share, and others still get in
+    let mine: Vec<_> = (0..MAX_PER_ADDRESS).map(|_| places.take(ip(1)).expect("a place")).collect();
+    assert!(places.take(ip(1)).is_none());
+    let other = places.take(ip(2)).expect("another address still gets in");
+    // all together there is a limit too
+    let mut rest = vec![];
+    let mut n = 3u8;
+    while mine.len() + 1 + rest.len() < MAX_CONNECTIONS {
+        rest.push(places.take(ip(n)).expect("a place"));
+        n += 1;
+    }
+    assert!(places.take(ip(250)).is_none(), "full");
+    // places come back when connections end
+    drop(other);
+    drop(mine);
+    assert!(places.take(ip(250)).is_some() && places.take(ip(1)).is_some());
+}
+
+/// A connection straight to the hub from `ip`, as the server registers one.
+fn conn_from(hub: &Hub, ip: [u8; 4]) -> (u64, Receiver<Out>) {
+    let (tx, rx) = channel();
+    (hub.register(tx, IpAddr::V4(Ipv4Addr::from(ip))), rx)
+}
+
+#[test]
+fn wrong_codes_lock_out_only_the_address_they_came_from() {
+    let (hub, _rx, root) = server("peer-lock");
+    let (bad, _b) = conn_from(&hub, [192, 168, 1, 66]);
+    let (good, _g) = conn_from(&hub, [192, 168, 1, 20]);
+    let refused = |r: PairResult| match r {
+        PairResult::Refused(m) => m,
+        _ => panic!("it got in"),
+    };
+    for _ in 0..MAX_WRONG {
+        refused(hub.pair(bad, "000000x", "x", "", false));
+    }
+    // that address is locked out, even with the right code...
+    assert!(refused(hub.pair(bad, &hub.code(), "x", "", false)).contains("Wait"));
+    // ...and a phone at another address pairs as usual
+    assert!(matches!(hub.pair(good, &hub.code(), "Mine", "", false), PairResult::Waiting(_)));
+    // guesses from many addresses never add up against one code: it is replaced
+    let first = hub.code();
+    for i in 0..MAX_WRONG_TOTAL {
+        let (c, _r) = conn_from(&hub, [10, 0, (i / 200) as u8, (i % 200) as u8 + 1]);
+        refused(hub.pair(c, "000000x", "x", "", false));
+    }
+    assert_ne!(hub.code(), first, "a new code after many wrong ones");
+    // only so many phones wait for Allow at once
+    let mut waiting = vec![];
+    for i in 0..(MAX_PENDING as u8 + 2) {
+        let (c, r) = conn_from(&hub, [172, 16, 0, i + 1]);
+        waiting.push((matches!(hub.pair(c, &hub.code(), "p", "", false), PairResult::Waiting(_)), r));
+    }
+    assert_eq!(waiting.iter().filter(|(w, _)| *w).count(), MAX_PENDING - 1, "the list is full (one was waiting already)");
+    assert_eq!(hub.pending().len(), MAX_PENDING);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_connection_that_is_not_a_phone_is_dropped_and_big_messages_are_refused() {
+    let (hub, _rx, root) = server("idle");
+    // pings alone don't keep a connection that never shows a key or asks to pair
+    let mut idle = ws(hub.tls_port);
+    let t0 = std::time::Instant::now();
+    let closed = loop {
+        if t0.elapsed() > super::server::AUTH_WITHIN + Duration::from_secs(8) {
+            break false;
+        }
+        if idle.send(Message::text(json!({ "t": "ping" }).to_string())).is_err() {
+            break true;
+        }
+        match idle.read() {
+            Ok(Message::Close(_)) | Err(_) => break true,
+            Ok(_) => std::thread::sleep(Duration::from_millis(300)),
+        }
+    };
+    assert!(closed, "an unpaired connection stayed open");
+    assert!(t0.elapsed() >= super::server::AUTH_WITHIN - Duration::from_secs(1), "it was closed too soon");
+    // a message bigger than a phone ever sends closes the connection (and isn't read)
+    let mut big = ws(hub.tls_port);
+    let _ = big.send(Message::text(json!({ "t": "pair", "code": "1".repeat(super::server::MAX_MESSAGE * 4) }).to_string()));
+    let gone = (0..20).any(|_| matches!(big.read(), Ok(Message::Close(_)) | Err(_)));
+    assert!(gone, "a huge message was taken");
+    // a request fed a byte at a time doesn't hold a place for long
+    let mut slow = TcpStream::connect(("127.0.0.1", hub.port)).unwrap();
+    slow.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
+    let t0 = std::time::Instant::now();
+    let mut dropped = false;
+    for b in b"GET / HTTP/1.1\r\nHost: localhost\r\nX-Slow: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".iter().cycle() {
+        if t0.elapsed() > Duration::from_secs(25) {
+            break;
+        }
+        if slow.write_all(&[*b]).is_err() {
+            dropped = true;
+            break;
+        }
+        let mut sink = [0u8; 8];
+        if matches!(slow.read(&mut sink), Ok(0)) {
+            dropped = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(400));
+    }
+    assert!(dropped && t0.elapsed() < Duration::from_secs(20), "a slow request was waited for: {:?}", t0.elapsed());
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn the_plain_door_only_points_at_https_unless_it_is_allowed() {
+    let (hub, _rx, root) = server("redirect");
+    // as a new install starts: the QR opens the HTTPS page, whatever the Secure phone link switch says
+    assert!(hub.url().starts_with("https://"));
+    hub.secure_link.store(false, Ordering::Relaxed);
+    assert!(hub.url().starts_with("https://") && !hub.plain_served());
+    let mut plain = TcpStream::connect(("127.0.0.1", hub.port)).unwrap();
+    plain.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    plain.write_all(b"GET /index.html HTTP/1.1\r\nHost: 192.168.1.5:47800\r\n\r\n").unwrap();
+    let mut out = String::new();
+    let _ = plain.read_to_string(&mut out);
+    assert!(out.starts_with("HTTP/1.1 301") && out.contains(&format!("Location: https://192.168.1.5:{}/", hub.tls_port)), "{out}");
+    assert!(!out.contains("Pair with your PC"), "the page itself isn't served in the clear");
+    // and no WebSocket: a code or key can't be sent in the clear
+    let tcp = TcpStream::connect(("127.0.0.1", hub.port)).unwrap();
+    tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    assert!(tungstenite::client(format!("ws://localhost:{}/ws", hub.port), tcp).is_err());
+    // a page of another website can't open the phone's WebSocket either
+    let mut s = tls(hub.tls_port);
+    write!(s, "GET /ws HTTP/1.1\r\nHost: localhost:{}\r\nOrigin: https://evil.example\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n", hub.tls_port).unwrap();
+    let mut all = Vec::new();
+    let _ = s.read_to_end(&mut all);
+    assert!(!String::from_utf8_lossy(&all).contains("101"), "another site's page got a WebSocket");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
 fn the_plain_page_has_no_certificate_and_pairs_the_same() {
     let (hub, rx, root) = server("plain");
+    // "Allow the plain http page" is on (an install that had phones paired before)
+    hub.plain_ok.store(true, Ordering::Relaxed);
     assert!(hub.tls_port > hub.port && hub.base_url().starts_with("http://") && hub.secure_url().unwrap().starts_with("https://"));
-    // the QR opens the plain page, or the HTTPS one when Secure phone link is on; the code rides after #
-    assert!(hub.url().starts_with(&hub.base_url()) && hub.url().ends_with(&format!("#{}", hub.code())));
-    hub.secure_link.store(true, Ordering::Relaxed);
+    // the QR opens the HTTPS page, or the plain one when Secure phone link is off; the code rides after #
     assert_eq!(hub.page_url(), hub.secure_url().unwrap());
     assert!(hub.url().starts_with("https://") && hub.url().ends_with(&format!("#{}", hub.code())));
     hub.secure_link.store(false, Ordering::Relaxed);
+    assert!(hub.url().starts_with(&hub.base_url()) && hub.url().ends_with(&format!("#{}", hub.code())));
     let (status, body) = http_get(hub.port, "/");
     assert_eq!(status, "HTTP/1.1 200 OK");
     assert!(String::from_utf8_lossy(&body).contains("Pair with your PC"));
@@ -177,7 +337,7 @@ fn the_plain_page_has_no_certificate_and_pairs_the_same() {
     phone.send(Message::text(json!({ "t": "pair", "code": hub.code(), "name": "Plain phone" }).to_string())).unwrap();
     read_t(&mut phone, "waiting");
     hub.approve(hub.pending()[0].conn);
-    let tok = read_t(&mut phone, "paired")["token"].as_str().unwrap().to_string();
+    let ticket = read_t(&mut phone, "paired")["ticket"].as_str().unwrap().to_string();
     hub.set_snapshot(r#"{"profile":"Plain"}"#.to_string());
     assert_eq!(read_t(&mut phone, "snap")["deck"]["profile"], "Plain");
     phone.send(Message::text(json!({ "t": "press", "button": "p-1" }).to_string())).unwrap();
@@ -187,7 +347,7 @@ fn the_plain_page_has_no_certificate_and_pairs_the_same() {
         }
     };
     assert_eq!(button, "p-1");
-    assert_eq!(http_get(hub.port, &format!("/icon?id=play&c=ff0000&t={tok}")).0, "HTTP/1.1 200 OK");
+    assert_eq!(http_get(hub.port, &format!("/icon?id=play&c=ff0000&k={ticket}")).0, "HTTP/1.1 200 OK");
     // a TLS handshake on the plain port is not answered
     let mut wrong = tls(hub.port);
     let mut sink = [0u8; 1];
@@ -212,6 +372,8 @@ fn a_phone_pairs_with_the_code_is_allowed_and_then_uses_its_key() {
     let paired = want(&mut phone, "paired");
     let tok = paired["token"].as_str().unwrap().to_string();
     assert!(tok.len() >= 40);
+    let ticket = paired["ticket"].as_str().unwrap().to_string();
+    assert!(ticket.len() >= 20 && ticket != tok);
     // it shows in the list, online, and the code is used up
     assert_eq!(hub.phones().len(), 1);
     assert!(hub.phones()[0].online);
@@ -234,14 +396,18 @@ fn a_phone_pairs_with_the_code_is_allowed_and_then_uses_its_key() {
     assert_eq!(got, [("t-1".to_string(), Kind::Press), ("t-2".to_string(), Kind::Turn(3))]);
     hub.tell(&device, &json!({ "t": "result", "ok": false, "message": "Spotify isn't running" }));
     assert_eq!(want(&mut phone, "result")["message"], "Spotify isn't running");
-    // its pictures now open with its key
-    assert_eq!(get(hub.tls_port, &format!("/icon?id=play&c=ff0000&t={tok}")).0, "HTTP/1.1 200 OK");
+    // its pictures open with the ticket it was handed, never with its key in the address
+    assert_eq!(get(hub.tls_port, &format!("/icon?id=play&c=ff0000&k={ticket}")).0, "HTTP/1.1 200 OK");
+    assert_eq!(get(hub.tls_port, &format!("/icon?id=play&c=ff0000&t={tok}")).0, "HTTP/1.1 403 Forbidden");
+    assert_eq!(get(hub.tls_port, &format!("/icon?id=play&c=ff0000&k={tok}")).0, "HTTP/1.1 403 Forbidden");
     drop(phone);
 
-    // a new connection with the key comes straight in; a wrong key doesn't
+    // a new connection with the key comes straight in (and is handed its ticket); a wrong key doesn't
     let mut again = ws(hub.tls_port);
     say(&mut again, json!({ "t": "hello", "token": tok }));
-    assert_eq!(want(&mut again, "hello")["name"], "Pixel 8");
+    let hello = want(&mut again, "hello");
+    assert_eq!(hello["name"], "Pixel 8");
+    assert_eq!(hello["ticket"], ticket.as_str(), "the same ticket while it is young, so pictures stay cached");
     let mut stranger = ws(hub.tls_port);
     say(&mut stranger, json!({ "t": "hello", "token": "not-a-key" }));
     want(&mut stranger, "unpaired");
@@ -251,7 +417,7 @@ fn a_phone_pairs_with_the_code_is_allowed_and_then_uses_its_key() {
     hub.forget(&device);
     want(&mut again, "forgotten");
     assert!(hub.phones().is_empty());
-    assert_eq!(get(hub.tls_port, &format!("/icon?id=play&c=ff0000&t={tok}")).0, "HTTP/1.1 403 Forbidden");
+    assert_eq!(get(hub.tls_port, &format!("/icon?id=play&c=ff0000&k={ticket}")).0, "HTTP/1.1 403 Forbidden", "a forgotten phone's ticket is gone");
     while let Ok(e) = rx.try_recv() {
         assert!(!matches!(e, PhoneEvent::Press { ref button, .. } if button == "t-9"), "a phone that isn't paired can't press");
     }
@@ -316,6 +482,7 @@ fn a_phone_that_stops_listening_is_dropped_and_devices_are_remembered() {
 fn phone_page_demo() {
     let (hub, rx, root) = server("demo");
     hub.require_match.store(false, Ordering::Relaxed);
+    hub.plain_ok.store(true, Ordering::Relaxed);
     let deck = json!({
         "profile": "Demo", "page": "p1", "follow": true,
         "settings": { "names": true, "vibe": true, "awake": true, "dark": true },

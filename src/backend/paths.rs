@@ -26,8 +26,7 @@ pub struct Paths {
 impl Paths {
     pub fn find() -> Paths {
         let dir = std::env::current_exe().ok().and_then(|e| e.parent().map(PathBuf::from)).unwrap_or_else(|| PathBuf::from("."));
-        let project = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let root = if dir.starts_with(project.join("target")) { project.join("build") } else { dir };
+        let root = dev_root(&dir).unwrap_or(dir);
         let library = root.join("library");
         Paths { media: library.join("media"), backups: root.join("backups"), library, root }
     }
@@ -70,6 +69,20 @@ impl Paths {
         problems.extend(super::media::seal_folder(&self.media));
         (!problems.is_empty()).then(|| problems.join(" "))
     }
+}
+
+/// Run from cargo (target\debug or target\release in a debug-capable build): the project's build\
+/// folder. Only debug builds and tests know where the project is; a release build never has the
+/// developer's folder written into it.
+#[cfg(any(debug_assertions, test))]
+fn dev_root(exe_dir: &std::path::Path) -> Option<PathBuf> {
+    let project = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    exe_dir.starts_with(project.join("target")).then(|| project.join("build"))
+}
+
+#[cfg(not(any(debug_assertions, test)))]
+fn dev_root(_: &std::path::Path) -> Option<PathBuf> {
+    None
 }
 
 /// The Minniondeck app's data folder. Read only.

@@ -36,8 +36,28 @@ const MAX_INDEX_BYTES: u64 = 2 * 1024 * 1024;
 /// Plugins bigger than this are refused, whatever the index says
 const MAX_PLUGIN_BYTES: u64 = 512 * 1024 * 1024;
 
-/// Bumped for every download and by `cancel`; a download stops when it is no longer the latest
+/// Bumped for every plugin download and by `cancel`; a download stops when it is no longer the latest
 static DOWNLOAD: AtomicU64 = AtomicU64::new(0);
+/// The same for profile downloads, which run beside plugin installs and never cancel them
+static PROFILE_DOWNLOAD: AtomicU64 = AtomicU64::new(0);
+
+/// A version as the marketplace may name one: digits and dots ("1.2.10"), with an optional
+/// "-beta.2" kind of ending. Nothing else, since it goes into a file name and an address.
+pub fn safe_version(v: &str) -> bool {
+    let (core, tail) = match v.split_once('-') {
+        Some((c, t)) => (c, Some(t)),
+        None => (v, None),
+    };
+    v.len() <= 32
+        && !core.is_empty()
+        && core.split('.').all(|p| !p.is_empty() && p.len() <= 9 && p.bytes().all(|b| b.is_ascii_digit()))
+        && tail.is_none_or(|t| !t.is_empty() && t.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.'))
+}
+
+/// The index as last read, and when: profile checks and installs right after a refresh use it
+/// instead of fetching it again for each plugin.
+static INDEX_TEXT: std::sync::Mutex<Option<(std::time::Instant, String, String)>> = std::sync::Mutex::new(None);
+const INDEX_FRESH: Duration = Duration::from_secs(60);
 
 /// Where the list and the files come from.
 #[derive(Clone, Debug, PartialEq)]
@@ -167,17 +187,27 @@ fn get(url: &str, what: &str) -> Result<ureq::Response, String> {
 pub fn fetch_index_text(src: &Source) -> Result<String, String> {
     let mut text = String::new();
     get(&src.index_url, "The list")?.into_reader().take(MAX_INDEX_BYTES).read_to_string(&mut text).map_err(|e| e.to_string())?;
+    *INDEX_TEXT.lock().unwrap_or_else(|e| e.into_inner()) = Some((std::time::Instant::now(), src.index_url.clone(), text.clone()));
     Ok(text)
 }
 
+/// The index: the copy read in the last minute from the same address, or a new one.
 fn fetch_index(src: &Source) -> Result<Index, String> {
-    serde_json::from_str(&fetch_index_text(src)?).map_err(|_| "The marketplace list couldn't be read.".to_string())
+    let recent = INDEX_TEXT.lock().unwrap_or_else(|e| e.into_inner()).as_ref().filter(|(at, url, _)| at.elapsed() < INDEX_FRESH && *url == src.index_url).map(|(_, _, t)| t.clone());
+    let text = match recent {
+        Some(t) => t,
+        None => fetch_index_text(src)?,
+    };
+    serde_json::from_str(&text).map_err(|_| "The marketplace list couldn't be read.".to_string())
 }
 
 /// The plugin and the version asked for, from the marketplace list: (entry, version, size, sha256)
 fn find(index: Index, id: &str, version: Option<&str>) -> Result<(Entry, String, u64, String), String> {
     let entry = index.plugins.into_iter().find(|p| p.id == id).ok_or("That plugin isn't in the marketplace.")?;
     let version = version.map(String::from).unwrap_or_else(|| entry.version.clone());
+    if !safe_version(&version) {
+        return Err(format!("The marketplace names a version of {} that can't be used.", entry.name));
+    }
     let (size, sha) = entry.file(&version).ok_or_else(|| format!("Version {version} of {} isn't in the marketplace.", entry.name))?;
     if size == 0 || size > MAX_PLUGIN_BYTES || sha.len() != 64 || !sha.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(format!("The marketplace's entry for {} is incomplete.", entry.name));
@@ -191,13 +221,13 @@ pub fn downloads_dir(root: &Path) -> PathBuf {
 }
 
 /// Copy `from` into `to`, hashing as it goes. Stops on Cancel and when more arrives than expected.
-fn save_checked(mut from: impl Read, to: &Path, size: u64, sha: &str, mine: u64, mut progress: impl FnMut(u64)) -> Result<(), String> {
+fn save_checked(mut from: impl Read, to: &Path, size: u64, sha: &str, (counter, mine): (&AtomicU64, u64), mut progress: impl FnMut(u64)) -> Result<(), String> {
     let mut out = fs::File::create(to).map_err(|e| format!("Couldn't save the download: {e}"))?;
     let mut hasher = ring::digest::Context::new(&ring::digest::SHA256);
     let mut buf = vec![0u8; 64 * 1024];
     let mut got = 0u64;
     loop {
-        if DOWNLOAD.load(Ordering::SeqCst) != mine {
+        if counter.load(Ordering::SeqCst) != mine {
             return Err("Download cancelled.".into());
         }
         let n = from.read(&mut buf).map_err(|_| "The download stopped. Check your internet connection and try again.".to_string())?;
@@ -248,6 +278,9 @@ pub fn download(root: &Path, id: &str, version: Option<&str>, progress: impl Fn(
     if !safe_name(id) {
         return Err("That isn't a plugin id.".into());
     }
+    if version.is_some_and(|v| !safe_version(v)) {
+        return Err("That isn't a version number.".into());
+    }
     let src = Source::load(root);
     let mine = DOWNLOAD.fetch_add(1, Ordering::SeqCst) + 1;
     let (e, version, size, sha) = find(fetch_index(&src)?, id, version)?;
@@ -256,7 +289,7 @@ pub fn download(root: &Path, id: &str, version: Option<&str>, progress: impl Fn(
     let file = dir.join(format!("{}-{version}.mdplugin", e.id));
     let resp = get(&src.file_url(&e.id, &version), &format!("{} {version}", e.name))?;
     progress(0, size);
-    let saved = save_checked(resp.into_reader(), &file, size, &sha, mine, |got| progress(got, size));
+    let saved = save_checked(resp.into_reader(), &file, size, &sha, (&DOWNLOAD, mine), |got| progress(got, size));
     if let Err(err) = saved {
         let _ = fs::remove_file(&file);
         return Err(err);
@@ -279,16 +312,20 @@ pub struct ProfileDownload {
 }
 
 pub fn download_plugin_profile(root: &Path, id: &str) -> Result<ProfileDownload, String> {
+    if !safe_name(id) {
+        return Err("That isn't a plugin id.".into());
+    }
     let src = Source::load(root);
-    let mine = DOWNLOAD.fetch_add(1, Ordering::SeqCst) + 1;
+    let mine = PROFILE_DOWNLOAD.fetch_add(1, Ordering::SeqCst) + 1;
     let (e, _, _, _) = find(fetch_index(&src)?, id, None)?;
     let p = e.profile.filter(profile_ok).ok_or("This plugin doesn't come with a profile.")?;
     let dir = downloads_dir(root);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let file = dir.join(format!("{}-profile.mdprofile", e.id));
+    // each its own file: two profile downloads at once never write the same one
+    let file = dir.join(format!("{}-profile-{mine}.mdprofile", e.id));
     let resp = get(&src.profile_url(&e.id, &p.file), &format!("The {} profile", p.name))?;
     let sha = p.sha256.to_ascii_lowercase();
-    if let Err(err) = save_checked(resp.into_reader(), &file, p.size, &sha, mine, |_| {}) {
+    if let Err(err) = save_checked(resp.into_reader(), &file, p.size, &sha, (&PROFILE_DOWNLOAD, mine), |_| {}) {
         let _ = fs::remove_file(&file);
         return Err(err);
     }
@@ -381,12 +418,24 @@ fn version_key(v: &str) -> Vec<u64> {
     v.split('.').map(|p| p.parse().unwrap_or(0)).collect()
 }
 
-/// The marketplace's index.json as the Marketplace page's list. Entries without a usable id are left out.
+/// The list last made from the marketplace's text (its hash): the same text again is the same list,
+/// so it is made (and kept for good) only when the marketplace really changed.
+static PARSED: std::sync::Mutex<Option<(u64, &'static [MarketPlugin])>> = std::sync::Mutex::new(None);
+
+/// The marketplace's index.json as the Marketplace page's list. Entries without a usable id or
+/// version are left out.
 fn parse_list(text: &str) -> Result<&'static [MarketPlugin], String> {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut h);
+    let hash = h.finish();
+    if let Some((_, list)) = PARSED.lock().unwrap_or_else(|e| e.into_inner()).filter(|(k, _)| *k == hash) {
+        return Ok(list);
+    }
     let list: List = serde_json::from_str(text).map_err(|_| "The marketplace list couldn't be read.".to_string())?;
     let mut out: Vec<MarketPlugin> = vec![];
-    for e in list.plugins.iter().filter(|e| safe_name(&e.id) && !e.name.is_empty() && !crate::backend::catalog::is_hidden(&e.id)) {
-        let mut versions: Vec<&ListVersion> = e.versions.iter().collect();
+    for e in list.plugins.iter().filter(|e| safe_name(&e.id) && safe_version(&e.version) && !e.name.is_empty() && !crate::backend::catalog::is_hidden(&e.id)) {
+        let mut versions: Vec<&ListVersion> = e.versions.iter().filter(|v| safe_version(&v.v)).collect();
         versions.sort_by(|a, b| version_key(&b.v).cmp(&version_key(&a.v)));
         let releases: Vec<Release> = versions.iter().map(|v| Release { v: leak(&v.v), date: leak(&v.date), title: leak(&v.title), notes: leak_all(&v.notes) }).collect();
         out.push(MarketPlugin {
@@ -415,7 +464,9 @@ fn parse_list(text: &str) -> Result<&'static [MarketPlugin], String> {
     if let Ok(mut m) = PROFILE_SHA.write() {
         *m = Some(shas);
     }
-    Ok(Box::leak(out.into_boxed_slice()))
+    let made: &'static [MarketPlugin] = Box::leak(out.into_boxed_slice());
+    *PARSED.lock().unwrap_or_else(|e| e.into_inner()) = Some((hash, made));
+    Ok(made)
 }
 
 fn cache_file(root: &Path) -> PathBuf {
@@ -443,18 +494,40 @@ fn icon_file(root: &Path, id: &str) -> PathBuf {
 }
 
 /// Each plugin's picture from the marketplace (plugins/<id>/icon.png), for its card: kept in
-/// <data>\market-icons\ and shown as "png:market/<id>". Blocks; call it from a thread.
+/// <data>\market-icons\ and shown as "png:market/<id>". One that is kept is asked for with its
+/// tag, so an unchanged picture isn't sent again. Blocks; call it from a thread.
 fn fetch_icons(root: &Path, src: &Source, list: &[MarketPlugin]) {
     let _ = fs::create_dir_all(root.join("market-icons"));
     for p in list.iter().filter(|p| safe_name(p.id)) {
         let url = format!("{}/plugins/{}/icon.png", src.files_base, p.id);
-        let Ok(resp) = agent().get(&url).call() else { continue };
+        let (file, tag_file) = (icon_file(root, p.id), icon_file(root, p.id).with_extension("etag"));
+        let mut req = agent().get(&url);
+        let tag = fs::read_to_string(&tag_file).ok().filter(|_| file.is_file());
+        if let Some(t) = tag.as_deref().map(str::trim).filter(|t| !t.is_empty() && t.len() < 200 && t.is_ascii()) {
+            req = req.set("If-None-Match", t);
+        }
+        let Ok(resp) = req.call() else { continue };
+        if resp.status() == 304 {
+            // unchanged: the kept one is on show already
+            continue;
+        }
+        let etag = resp.header("ETag").map(String::from);
         let mut bytes = Vec::new();
         if resp.into_reader().take(256 * 1024).read_to_end(&mut bytes).is_err() || !bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
             continue;
         }
-        let _ = write_atomic(&icon_file(root, p.id), &bytes);
-        crate::ui::images::register_live(&format!("market/{}", p.id), bytes);
+        if fs::read(&file).ok().as_deref() != Some(bytes.as_slice()) {
+            let _ = write_atomic(&file, &bytes);
+            crate::ui::images::register_live(&format!("market/{}", p.id), bytes);
+        }
+        match etag {
+            Some(t) => {
+                let _ = fs::write(&tag_file, t);
+            }
+            None => {
+                let _ = fs::remove_file(&tag_file);
+            }
+        }
     }
 }
 
@@ -481,6 +554,58 @@ pub fn refresh(root: &Path) -> Result<usize, String> {
 /// Stop the download that is running, if any
 pub fn cancel() {
     DOWNLOAD.fetch_add(1, Ordering::SeqCst);
+}
+
+#[cfg(test)]
+mod safety_tests {
+    use super::*;
+
+    // a version goes into a file name and an address: only plain version numbers are used
+    #[test]
+    fn only_plain_version_numbers_are_used() {
+        for ok in ["1", "0.2.1", "10.20.30", "1.0.0-beta.2", "2.0-rc1"] {
+            assert!(safe_version(ok), "{ok}");
+        }
+        for bad in ["", "1..2", ".1", "1.", "../1", "1/2", "1.0-", "1.0-beta/x", "1.0?x=1", "1.0 ", "v1.0", "1.0-be_ta", "1234567890.1", &"1.".repeat(20)] {
+            assert!(!safe_version(bad), "{bad}");
+        }
+        let entry = r#"{"plugins":[{"id":"demo","name":"Demo","version":"../../evil","size":10,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}"#;
+        assert!(matches!(find(serde_json::from_str(entry).unwrap(), "demo", None), Err(e) if e.contains("can't be used")));
+        assert!(download(Path::new("."), "demo", Some("1/../2"), |_, _| {}).unwrap_err().contains("version"));
+    }
+
+    // a profile download never cancels a plugin install running beside it
+    #[test]
+    fn profile_and_plugin_downloads_cancel_apart() {
+        let before = DOWNLOAD.load(Ordering::SeqCst);
+        let _ = download_plugin_profile(Path::new("."), "../not an id");
+        PROFILE_DOWNLOAD.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(DOWNLOAD.load(Ordering::SeqCst), before, "a profile download leaves a plugin's going");
+        // (a counter of its own here: the real one is shared with the other tests)
+        let own = AtomicU64::new(1);
+        let plugin = 1;
+        let dir = std::env::temp_dir().join(format!("md-market-cancel-{}", super::super::util::now_ms()));
+        fs::create_dir_all(&dir).unwrap();
+        let body = b"0123456789";
+        let sha = super::super::util::sha256_hex(body);
+        assert!(save_checked(&body[..], &dir.join("a"), 10, &sha, (&own, plugin), |_| {}).is_ok());
+        own.fetch_add(1, Ordering::SeqCst);
+        assert!(save_checked(&body[..], &dir.join("b"), 10, &sha, (&own, plugin), |_| {}).unwrap_err().contains("cancelled"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // the same list again is the same list, not another copy kept for good
+    #[test]
+    fn the_same_list_is_made_once() {
+        let text = r#"{"plugins":[{"id":"demo_same","name":"Demo","version":"1.0.0","versions":[{"v":"1.0.0"},{"v":"../x"}]}]}"#;
+        let a = parse_list(text).unwrap();
+        let b = parse_list(text).unwrap();
+        assert!(std::ptr::eq(a, b));
+        assert_eq!(a[0].releases.len(), 1, "a release with a bad version is left out");
+        let c = parse_list(&text.replace("1.0.0\",\"versions", "1.0.1\",\"versions")).unwrap();
+        assert!(!std::ptr::eq(a, c));
+        assert!(parse_list(r#"{"plugins":[{"id":"x","name":"X","version":"1.0/2"}]}"#).is_err(), "no usable entries");
+    }
 }
 
 /// Downloads a plugin from the live marketplace into a temporary folder and installs it there
@@ -582,11 +707,11 @@ mod tests {
         let data = b"hello plugin";
         let sha = super::super::util::sha256_hex(data);
         let mine = DOWNLOAD.load(Ordering::SeqCst);
-        assert!(save_checked(&data[..], &file, data.len() as u64, &sha, mine, |_| {}).is_ok());
-        assert!(save_checked(&data[..], &file, data.len() as u64, &"0".repeat(64), mine, |_| {}).unwrap_err().contains("checksum"));
-        assert!(save_checked(&data[..], &file, 4, &sha, mine, |_| {}).unwrap_err().contains("bigger"));
-        assert!(save_checked(&data[..], &file, 100, &sha, mine, |_| {}).unwrap_err().contains("early"));
-        assert!(save_checked(&data[..], &file, data.len() as u64, &sha, mine + 1, |_| {}).unwrap_err().contains("cancelled"));
+        assert!(save_checked(&data[..], &file, data.len() as u64, &sha, (&DOWNLOAD, mine), |_| {}).is_ok());
+        assert!(save_checked(&data[..], &file, data.len() as u64, &"0".repeat(64), (&DOWNLOAD, mine), |_| {}).unwrap_err().contains("checksum"));
+        assert!(save_checked(&data[..], &file, 4, &sha, (&DOWNLOAD, mine), |_| {}).unwrap_err().contains("bigger"));
+        assert!(save_checked(&data[..], &file, 100, &sha, (&DOWNLOAD, mine), |_| {}).unwrap_err().contains("early"));
+        assert!(save_checked(&data[..], &file, data.len() as u64, &sha, (&DOWNLOAD, mine + 1), |_| {}).unwrap_err().contains("cancelled"));
         let _ = fs::remove_dir_all(&dir);
     }
 

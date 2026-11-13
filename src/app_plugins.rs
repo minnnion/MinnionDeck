@@ -12,7 +12,6 @@ use crate::backend::plugins::{self, Msg, PluginInfo};
 /// Pages either side of the one open whose buttons also hear that they are "shown", so a swipe
 /// shows live values at once.
 const NEAR_PAGES: usize = 5;
-const SHOWN_EVERY: f64 = 0.5;
 /// Mouse-wheel notches closer together than this go to a knob as one turn
 const TURN_BURST: f64 = 0.06;
 
@@ -22,9 +21,11 @@ pub struct PluginGlue {
     live: HashMap<String, Live>,
     /// The plugins Settings lists
     pub rows: Vec<PluginInfo>,
-    /// The plugin buttons they were told are on screen: (button, its steps, steps as text)
-    shown: HashMap<String, (ButtonCtx, Vec<Step>, String)>,
-    shown_at: f64,
+    /// The plugin buttons they were told are on screen: (button, its steps, a hash of the steps)
+    shown: HashMap<String, (ButtonCtx, Vec<Step>, u64)>,
+    /// What decided `shown` last time (the page, phones' pages, those pages' buttons): it is made
+    /// again only when this changes
+    shown_key: u64,
     /// The plugin button the pointer is held down on
     pub held: Option<usize>,
     /// Knob turns collected: tile → (clicks, when the first came)
@@ -37,7 +38,7 @@ impl PluginGlue {
     /// Starts plugins (not in screenshot mode, so a picture never runs your buttons' plugins).
     /// Returns a message for the user when plugins were copied.
     pub fn start(root: &std::path::Path, ctx: &egui::Context, run: bool) -> (PluginGlue, Option<String>) {
-        let mut glue = PluginGlue { rx: None, live: HashMap::new(), rows: vec![], shown: HashMap::new(), shown_at: 0.0, held: None, turns: HashMap::new(), dev_seen: None };
+        let mut glue = PluginGlue { rx: None, live: HashMap::new(), rows: vec![], shown: HashMap::new(), shown_key: 0, held: None, turns: HashMap::new(), dev_seen: None };
         let note = None;
         if run {
             // makes <data>market.json (where the marketplace is) the first time, so it can be edited
@@ -84,6 +85,17 @@ pub fn is_knob(action: &str) -> bool {
     crate::backend::catalog::actions().iter().find(|a| a.id == action).is_some_and(|a| a.knob)
 }
 
+/// A hash of a button's steps: which button it is to a plugin, as far as "shown" goes.
+fn steps_key(steps: &[Step]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for s in steps {
+        s.kind.hash(&mut h);
+        s.fields.to_string().hash(&mut h);
+    }
+    h.finish()
+}
+
 fn has_plugin(steps: &[Step]) -> bool {
     steps.iter().any(|s| s.kind.starts_with("plug:"))
 }
@@ -108,25 +120,11 @@ impl App {
                 msgs.push(m);
             }
         }
+        // loading plugins says "changed" once for each: the list is made again once for all of them
+        let mut changed = false;
         for m in msgs {
             match m {
-                Msg::Changed => {
-                    crate::backend::catalog::rebuild(&self.lib.paths.root);
-                    self.plug.rows = plugins::list();
-                    self.market_installed = self
-                        .plug
-                        .rows
-                        .iter()
-                        .filter_map(|p| crate::backend::catalog::plugins().iter().find(|c| c.id == p.id).map(|c| (c.id, p.version.clone())))
-                        .collect();
-                    if self.plug.dev_seen.is_none() {
-                        let dev = plugins::dev_mode();
-                        self.st.insert("dev", dev as _);
-                        self.plug.dev_seen = Some(dev);
-                    }
-                    // plugins that (re)started hear about the buttons on screen again
-                    self.plug.shown.clear();
-                }
+                Msg::Changed => changed = true,
                 Msg::Button { button, state, title, icon } => {
                     let live = self.plug.live.entry(button.clone()).or_default();
                     if let Some(s) = state {
@@ -163,6 +161,24 @@ impl App {
                 Msg::OptionsChanged => {}
             }
         }
+        if changed {
+            crate::backend::catalog::rebuild(&self.lib.paths.root);
+            self.plug.rows = plugins::list();
+            self.market_installed = self
+                .plug
+                .rows
+                .iter()
+                .filter_map(|p| crate::backend::catalog::plugins().iter().find(|c| c.id == p.id).map(|c| (c.id, p.version.clone())))
+                .collect();
+            if self.plug.dev_seen.is_none() {
+                let dev = plugins::dev_mode();
+                self.st.insert("dev", dev as _);
+                self.plug.dev_seen = Some(dev);
+            }
+            // plugins that (re)started hear about the buttons on screen again
+            self.plug.shown.clear();
+            self.plug.shown_key = 0;
+        }
         // show it on the buttons (never saved: Live doesn't count as a change)
         for t in self.sample.tiles.iter_mut() {
             let want = self.plug.live.get(&t.id).cloned().unwrap_or_default();
@@ -176,7 +192,8 @@ impl App {
                 self.plug.held = None;
                 if let Some(t) = self.sample.tiles.get(i).cloned() {
                     let steps = self.lib.steps_of(&t);
-                    if has_plugin(&steps) {
+                    // (a button of an imported profile that wasn't allowed sends nothing)
+                    if has_plugin(&steps) && !self.lib.asks_before(&steps) {
                         let b = self.plugin_ctx(&t);
                         std::thread::spawn(move || {
                             std::thread::sleep(std::time::Duration::from_millis(40));
@@ -195,6 +212,9 @@ impl App {
             }
             if let Some(t) = self.sample.tiles.get(i).cloned() {
                 let steps = self.lib.steps_of(&t);
+                if !has_plugin(&steps) || !self.allow_press(&steps, now) {
+                    continue;
+                }
                 let b = self.plugin_ctx(&t);
                 std::thread::spawn(move || {
                     let _ = plugins::button_event("turn", &b, &steps, Some(&serde_json::json!({ "by": by.clamp(-50, 50) })));
@@ -212,17 +232,19 @@ impl App {
                 let _ = plugins::set_dev_mode(dev);
             });
         }
-        // which plugin buttons are on screen: the open page and 5 either side
-        if now - self.plug.shown_at >= SHOWN_EVERY {
-            self.plug.shown_at = now;
-            self.update_shown();
-        }
-        ctx.request_repaint_after(std::time::Duration::from_millis(500));
+        // which plugin buttons are on screen: the open page and 5 either side. Everything that
+        // changes it (a page, a button, a phone's page, a plugin restarting) comes with a frame,
+        // so it is looked at on each frame and made again only when it changed. No timer: a
+        // window that is still (or in the tray) isn't woken.
+        self.update_shown();
     }
 
-    fn update_shown(&mut self) {
+    /// The pages whose plugin buttons count as on screen (by index), and a hash of everything
+    /// that decides which buttons those are and what they hear.
+    fn near_pages(&self) -> (Vec<usize>, u64) {
+        use std::hash::{Hash, Hasher};
         let pages: Vec<usize> = (0..self.sample.pages.len()).filter(|&k| !self.sample.pages[k].folder).collect();
-        let Some(at) = pages.iter().position(|&k| k == self.sample.page) else { return };
+        let Some(at) = pages.iter().position(|&k| k == self.sample.page) else { return (vec![], 0) };
         // the page open here, and the pages phones are showing
         let mut centres = vec![at];
         if let Some(h) = &self.phones.hub {
@@ -238,11 +260,27 @@ impl App {
         }
         near.sort_unstable();
         near.dedup();
-        let mut now_shown: HashMap<String, (ButtonCtx, Vec<Step>, String)> = HashMap::new();
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (self.sample.active, &near, self.lib.needs_trust()).hash(&mut h);
+        for t in self.sample.tiles.iter().filter(|t| near.contains(&t.page)) {
+            (&t.id, &t.action, &t.values, t.look_now()).hash(&mut h);
+        }
+        (near, h.finish())
+    }
+
+    fn update_shown(&mut self) {
+        let (near, key) = self.near_pages();
+        if key == self.plug.shown_key && key != 0 {
+            return;
+        }
+        self.plug.shown_key = key;
+        let mut now_shown: HashMap<String, (ButtonCtx, Vec<Step>, u64)> = HashMap::new();
         for t in self.sample.tiles.iter().filter(|t| near.contains(&t.page) && !t.id.is_empty()) {
             let steps = self.lib.steps_of(t);
-            if has_plugin(&steps) {
-                let key = format!("{steps:?}");
+            // buttons of an imported profile that wasn't allowed yet tell plugins nothing: their
+            // settings came with the file. They are "shown" once the profile is allowed.
+            if has_plugin(&steps) && !self.lib.asks_before(&steps) {
+                let key = steps_key(&steps);
                 now_shown.insert(t.id.clone(), (ButtonCtx { id: t.id.clone(), state: t.look_now() }, steps, key));
             }
         }

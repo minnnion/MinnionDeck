@@ -340,7 +340,8 @@ mod imp {
                         r();
                     }
                     // a request to close isn't a reason to put the window up
-                    if text != crate::backend::single::QUIT {
+                    // nor is a command from the installer, which works with the window where it is
+                    if text != crate::backend::single::QUIT && !text.starts_with(crate::backend::single::CMD) {
                         show_window();
                     }
                 }

@@ -76,8 +76,28 @@ struct Server {
 
 static SESSION: Mutex<Option<Session>> = Mutex::new(None);
 static SERVER: Mutex<Option<Server>> = Mutex::new(None);
-/// The website tabs listening on /v1/events, oldest first
+/// The website tabs listening on /v1/events, oldest first (at most MAX_TABS: the oldest goes)
 static CLIENTS: Mutex<Vec<TcpStream>> = Mutex::new(Vec::new());
+const MAX_TABS: usize = 8;
+/// Requests served at once; more are closed as they arrive
+const MAX_OPEN: usize = 24;
+static OPEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// A request's place in the count, given back however it ends.
+struct Place;
+
+impl Place {
+    fn take() -> Option<Place> {
+        use std::sync::atomic::Ordering;
+        OPEN.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| (n < MAX_OPEN).then_some(n + 1)).ok().map(|_| Place)
+    }
+}
+
+impl Drop for Place {
+    fn drop(&mut self) {
+        OPEN.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
 /// The key a tab said yes to (/v1/ack)
 static ACKED: Mutex<Option<String>> = Mutex::new(None);
 
@@ -104,7 +124,10 @@ fn ensure_server(media_dir: &std::path::Path, tx: Sender<Done>, repaint: Box<dyn
         .name("websync".into())
         .spawn(move || {
             for stream in listener.incoming().flatten() {
+                // a page on this PC can't open threads without end
+                let Some(place) = Place::take() else { continue };
                 std::thread::spawn(move || {
+                    let _place = place;
                     let _ = handle(stream);
                 });
             }
@@ -256,9 +279,13 @@ fn read_request(stream: &mut TcpStream) -> Option<Request> {
     Some(Request { method, path, query, origin, host, body })
 }
 
-/// The website, or a page on this PC (for working on the website).
-fn allowed(origin: &str) -> bool {
-    origin == SITE || origin == OLD_SITE || origin.starts_with("http://localhost:") || origin.starts_with("http://127.0.0.1:") || origin == "http://localhost" || origin == "http://127.0.0.1"
+/// The website, or the editor this app serves itself (on its own port). Other pages on this PC
+/// (another program's local server) may not, since /v1/events hands out the Edit window's key;
+/// a debug build also lets the website's own dev server in, for working on it.
+fn allowed(origin: &str, port: u16) -> bool {
+    let own = origin == format!("http://127.0.0.1:{port}") || origin == format!("http://localhost:{port}");
+    let local_dev = cfg!(debug_assertions) && (origin.starts_with("http://localhost:") || origin.starts_with("http://127.0.0.1:"));
+    origin == SITE || origin == OLD_SITE || own || local_dev
 }
 
 fn reply(stream: &mut TcpStream, status: &str, origin: Option<&str>, ctype: &str, body: &[u8]) -> std::io::Result<()> {
@@ -289,15 +316,15 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {
     let Some(req) = read_request(&mut stream) else {
         return reply(&mut stream, "400 Bad Request", None, "text/plain", b"bad request");
     };
+    let port = lock(&SERVER).as_ref().map(|s| s.port).unwrap_or(0);
     // only the website may ask; a page from anywhere else gets nothing it can read
     let origin = match req.origin.as_deref() {
-        Some(o) if allowed(o) => Some(o.to_string()),
+        Some(o) if allowed(o, port) => Some(o.to_string()),
         Some(_) => return reply(&mut stream, "403 Forbidden", None, "text/plain", b"not allowed"),
         None => None,
     };
     let o = origin.as_deref();
     // only this PC's own names: a web page can't reach the server through a name it controls
-    let port = lock(&SERVER).as_ref().map(|s| s.port).unwrap_or(0);
     if !req.host.as_deref().is_some_and(|h| h == format!("127.0.0.1:{port}") || h == format!("localhost:{port}")) {
         return reply(&mut stream, "421 Misdirected Request", None, "text/plain", b"wrong host");
     }
@@ -343,7 +370,12 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {
             stream.write_all(head.as_bytes())?;
             stream.flush()?;
             stream.set_read_timeout(None)?;
-            lock(&CLIENTS).push(stream);
+            let mut tabs = lock(&CLIENTS);
+            // the oldest tabs make way: a page can't hold the server open without end
+            while tabs.len() >= MAX_TABS {
+                let _ = tabs.remove(0).shutdown(std::net::Shutdown::Both);
+            }
+            tabs.push(stream);
             return Ok(());
         }
         _ => {}
@@ -437,6 +469,37 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {
     }
 }
 
+/// The tests that use the shared request count take turns.
+#[cfg(test)]
+static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+#[cfg(test)]
+mod origin_tests {
+    use super::*;
+
+    // /v1/events hands out the Edit window's key: only the website and the app's own editor page
+    #[test]
+    fn only_the_website_and_the_apps_own_page_may_call() {
+        assert!(allowed(SITE, 51735) && allowed(OLD_SITE, 51735));
+        assert!(allowed("http://127.0.0.1:51735", 51735) && allowed("http://localhost:51735", 51735));
+        assert!(!allowed("https://evil.example", 51735));
+        assert!(!allowed("https://minniondeck.github.io.evil.example", 51735));
+        // another program's page on this PC: only in a debug build (working on the website)
+        assert_eq!(allowed("http://localhost:5173", 51735), cfg!(debug_assertions));
+        assert_eq!(allowed("http://127.0.0.1:8080", 51735), cfg!(debug_assertions));
+    }
+
+    #[test]
+    fn requests_at_once_are_capped() {
+        let _one = lock(&TEST_LOCK);
+        let held: Vec<Place> = std::iter::from_fn(Place::take).take(MAX_OPEN + 5).collect();
+        assert!(held.len() <= MAX_OPEN);
+        assert!(Place::take().is_none());
+        drop(held);
+        assert!(Place::take().is_some());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -452,6 +515,7 @@ mod tests {
 
     #[test]
     fn the_website_gets_the_picture_and_sends_it_back() {
+        let _one = lock(&super::TEST_LOCK);
         let dir = std::env::temp_dir().join(format!("md-websync-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();

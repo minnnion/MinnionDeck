@@ -43,7 +43,8 @@ pub fn dialog(app: &mut App, ui: &mut Ui, win: Rect) {
         Trust::Bad { why } => (why.clone(), false),
     };
     let damaged = matches!(info.signature, Trust::Bad { .. });
-    let (dw, dh) = (520.0_f32, 330.0_f32.min(win.height() - 50.0));
+    let older = info.downgrade();
+    let (dw, dh) = (520.0_f32, (330.0_f32 + if info.key.is_some() { 24.0 } else { 0.0 } + if older { 44.0 } else { 0.0 }).min(win.height() - 50.0));
     let dx = win.min.x + (win.width() - dw) / 2.0;
     let dy = win.min.y + 36.0 + (win.height() - 36.0 - dh) / 2.0 + 10.0 * (1.0 - p);
     let dialog = Rect::from_min_size(pos2(dx, dy), vec2(dw, dh));
@@ -64,7 +65,14 @@ pub fn dialog(app: &mut App, ui: &mut Ui, win: Rect) {
     cv.text(x, y, 20.0, 14.0, 400, th.slate, &format!("Version {} · adds {buttons}", info.version));
     y += 30.0;
     cv.fill(x, y + 4.0, 10.0, 10.0, if signer_ok { th.mint } else { th.sun });
-    y += cv.para(x + 18.0, y, w - 18.0, 19.0, 14.0, 600, th.ink, &signer) + 8.0;
+    y += cv.para(x + 18.0, y, w - 18.0, 19.0, 14.0, 600, th.ink, &signer) + 4.0;
+    // the name in a signature can be anything: the key is what to compare with the author's page
+    if let Some(k) = &info.key {
+        cv.text(x + 18.0, y, 20.0, 14.0, 400, th.slate, "Key");
+        cv.text(x + 18.0 + 40.0, y, 20.0, 14.0, 700, th.ink, k);
+        y += 24.0;
+    }
+    y += 4.0;
     match (&info.why, damaged) {
         (_, true) => {
             y += cv.para(x, y, w, 19.0, 14.0, 400, th.coral, "It was changed after it was signed, so it won't be installed.") + 6.0;
@@ -77,7 +85,11 @@ pub fn dialog(app: &mut App, ui: &mut Ui, win: Rect) {
         }
     }
     if let Some(v) = &info.installed {
-        y += cv.para(x, y, w, 19.0, 14.0, 400, th.slate, &format!("It replaces version {v}. Its saved settings stay.")) + 6.0;
+        if older {
+            y += cv.para(x, y, w, 19.0, 14.0, 600, th.coral, &format!("This is an older version than the one installed ({v}). Install it only if you mean to go back.")) + 6.0;
+        } else {
+            y += cv.para(x, y, w, 19.0, 14.0, 400, th.slate, &format!("It replaces version {v}. Its saved settings stay.")) + 6.0;
+        }
     }
     let _ = y;
     // Install and Cancel
@@ -87,7 +99,7 @@ pub fn dialog(app: &mut App, ui: &mut Ui, win: Rect) {
     if cv.button("ia-cancel", dw - 24.0 - cw, by, cw, 44.0, "Cancel", o) && !ask.busy {
         close = true;
     }
-    let label = if ask.busy { "Installing…" } else if info.installed.is_some() { "Update" } else { "Install" };
+    let label = if ask.busy { "Installing…" } else if older { "Install older" } else if info.installed.is_some() { "Update" } else { "Install" };
     let iw = cv.measure(15.0, 600, "Installing…").max(cv.measure(15.0, 600, label)) + 36.0;
     let mut po = cv.opt_btn(15.0);
     po.bg = th.mint;

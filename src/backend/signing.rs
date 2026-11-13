@@ -116,7 +116,10 @@ pub fn make_key(root: &Path, name: &str, out_dir: &Path) -> Result<PathBuf, Stri
     Ok(out)
 }
 
-/// Sign a plugin's files (name in the pack → bytes). None when this PC has no author key.
+/// Sign a plugin's files (name in the pack → bytes). None when this PC has no author key. (The
+/// plugin kit signs packs in this format; the app itself only checks them, and signs releases
+/// with `sign_release`.)
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn sign(root: &Path, files: &[(String, Vec<u8>)]) -> Result<Option<(AuthorKey, Vec<u8>)>, String> {
     let Some(me) = author(root) else { return Ok(None) };
     let sealed = fs::read(author_dir(root).join("key.bin")).map_err(|_| "The author key file is missing. Run plugin key again.".to_string())?;
@@ -160,8 +163,14 @@ struct SigFile {
 
 /// Check an installed (or unpacked) plugin folder against its signature
 pub fn verify_folder(folder: &Path, user_trusted: &[AuthorKey]) -> Trust {
-    let Ok(text) = fs::read_to_string(folder.join(SIG_FILE)) else { return Trust::Unsigned };
-    let bad = |why: &str| Trust::Bad { why: why.to_string() };
+    verify_folder_hashes(folder, user_trusted).0
+}
+
+/// `verify_folder`, also returning the file hashes the signature vouches for (when it is signed and
+/// every file matched), so a copy made from the folder can be checked against them.
+pub fn verify_folder_hashes(folder: &Path, user_trusted: &[AuthorKey]) -> (Trust, Option<BTreeMap<String, String>>) {
+    let Ok(text) = fs::read_to_string(folder.join(SIG_FILE)) else { return (Trust::Unsigned, None) };
+    let bad = |why: &str| (Trust::Bad { why: why.to_string() }, None);
     let Ok(s) = serde_json::from_str::<SigFile>(&text) else { return bad("Its signature can't be read.") };
     let Ok(key) = B64.decode(&s.key) else { return bad("Its signature can't be read.") };
     let Ok(sig) = B64.decode(&s.sig) else { return bad("Its signature can't be read.") };
@@ -179,13 +188,53 @@ pub fn verify_folder(folder: &Path, user_trusted: &[AuthorKey]) -> Trust {
         }
     }
     let author = s.author.chars().take(40).collect::<String>();
-    if BUILT_IN.iter().any(|(_, k)| *k == s.key) {
+    let trust = if BUILT_IN.iter().any(|(_, k)| *k == s.key) {
         Trust::Trusted { author }
     } else if user_trusted.iter().any(|a| a.key == s.key) {
         Trust::User { author }
     } else {
         Trust::Untrusted { author }
-    }
+    };
+    (trust, Some(s.files))
+}
+
+/// The bytes a release signature (version 2) covers: the author, the key, the version the
+/// installer is, and the installer's name and hash. Version 1 had no version in it, so an older
+/// signed installer could have been passed off as a newer release.
+fn release_message(author: &str, key: &str, version: &str, installer: &str, sha: &str) -> Vec<u8> {
+    format!("minniondeck-release-signature-v2\nauthor:{author}\nkey:{key}\nversion:{version}\n{installer} {sha}\n").into_bytes()
+}
+
+/// A release's .sig. From 0.2.2 it holds two signatures by the same key: `sig`, over the version-1
+/// message (author, key, file), which builds up to 0.2.1 check, so they can still update to it;
+/// and `sig2`, over the version-2 message that also names the version, which this build requires.
+#[derive(Deserialize)]
+struct ReleaseSig {
+    #[serde(default)]
+    v: u32,
+    author: String,
+    key: String,
+    #[serde(default)]
+    version: String,
+    files: BTreeMap<String, String>,
+    #[serde(default)]
+    sig2: String,
+}
+
+/// The version an installer's name says: "Minniondeck_0.2.2_x64-setup.exe" → "0.2.2".
+pub fn version_in_name(installer: &str) -> Option<String> {
+    installer.split('_').nth(1).filter(|v| crate::backend::market::safe_version(v)).map(String::from)
+}
+
+/// "v0.2.2" or "0.2.2" → "0.2.2"
+fn bare(v: &str) -> &str {
+    v.trim().trim_start_matches(['v', 'V'])
+}
+
+/// The key a plugin folder's signature names (whether or not it checks out), to show its fingerprint.
+pub fn signer_key(folder: &Path) -> Option<String> {
+    let s: SigFile = serde_json::from_str(&fs::read_to_string(folder.join(SIG_FILE)).ok()?).ok()?;
+    valid_key(&s.key).then_some(s.key)
 }
 
 /// The signature file that goes up beside a release's installer: `<installer name>.sig`
@@ -193,38 +242,73 @@ pub fn release_sig_name(installer: &str) -> String {
     format!("{installer}.sig")
 }
 
-/// Sign an app installer for a release with this PC's author key (the same signature.json
-/// format as plugins, listing the one file). Writes `<installer>.sig` beside it.
-pub fn sign_release(root: &Path, installer: &Path) -> Result<(AuthorKey, PathBuf), String> {
+/// Sign an app installer for a release with this PC's author key. The signature (version 2) says
+/// which version the installer is: `version`, or the one in its name ("Minniondeck_0.2.2_x64-setup.exe").
+/// Writes `<installer>.sig` beside it.
+pub fn sign_release(root: &Path, installer: &Path, version: Option<&str>) -> Result<(AuthorKey, PathBuf), String> {
     let name = installer.file_name().and_then(|n| n.to_str()).ok_or("Name the installer file.")?.to_string();
+    let version = match version {
+        Some(v) => bare(v).to_string(),
+        None => version_in_name(&name).ok_or("Say which version it is: --sign-release <installer.exe> --version 1.2.3")?,
+    };
+    if !crate::backend::market::safe_version(&version) {
+        return Err(format!("\"{version}\" isn't a version number."));
+    }
     let bytes = fs::read(installer).map_err(|e| format!("Could not read {}: {e}", installer.display()))?;
-    let (me, body) = sign(root, &[(name.clone(), bytes)])?.ok_or_else(|| format!("There is no author key in {}.", author_dir(root).display()))?;
+    let me = author(root).ok_or_else(|| format!("There is no author key in {}.", author_dir(root).display()))?;
+    let sealed = fs::read(author_dir(root).join("key.bin")).map_err(|_| "The author key file is missing. Run plugin key again.".to_string())?;
+    let pair = Ed25519KeyPair::from_pkcs8(&unprotect(&sealed)?).map_err(|_| "The author key can't be read.".to_string())?;
+    if B64.encode(pair.public_key().as_ref()) != me.key {
+        return Err("The author key doesn't match author.json.".into());
+    }
+    let sha = crate::backend::util::sha256_hex(&bytes);
+    let files: BTreeMap<String, String> = [(name.clone(), sha.clone())].into();
+    // the old signature, for builds up to 0.2.1 updating to this one, and the new one with the version
+    let sig = pair.sign(&message(&me.name, &me.key, &files));
+    let sig2 = pair.sign(&release_message(&me.name, &me.key, &version, &name, &sha));
+    let body = json!({ "v": 2, "author": me.name, "key": me.key, "version": version, "files": files, "sig": B64.encode(sig.as_ref()), "sig2": B64.encode(sig2.as_ref()) });
     let out = installer.with_file_name(release_sig_name(&name));
-    fs::write(&out, body).map_err(|e| format!("Could not write {}: {e}", out.display()))?;
+    fs::write(&out, serde_json::to_string_pretty(&body).unwrap_or_default()).map_err(|e| format!("Could not write {}: {e}", out.display()))?;
     Ok((me, out))
 }
 
-/// Check a release installer's signature: it must be signed by one of `trusted` (public keys)
-/// and list exactly this installer with this SHA-256. Returns the author's name.
-pub fn verify_release_with(sig: &[u8], installer: &str, sha256_hex: &str, trusted: &[&str]) -> Result<String, String> {
+/// Check a release installer's signature: signed (version 2) by one of `trusted` (public keys),
+/// for exactly this installer with this SHA-256, saying it is version `tag` (the release's tag),
+/// and that version newer than `running`. Returns the author's name.
+///
+/// Signatures of version 1 (releases up to 0.2.1) don't say which version they sign, so they are
+/// refused from 0.2.2 on. Builds before 0.2.2 check updates their own way and are not affected;
+/// every release from 0.2.2 is signed with version 2.
+pub fn verify_release_with(sig: &[u8], installer: &str, sha256_hex: &str, tag: &str, running: &str, trusted: &[&str]) -> Result<String, String> {
     let bad = || "The update's signature doesn't match, so it wasn't kept.".to_string();
-    let s: SigFile = serde_json::from_slice(sig).map_err(|_| "The update's signature can't be read, so it wasn't kept.".to_string())?;
+    let s: ReleaseSig = serde_json::from_slice(sig).map_err(|_| "The update's signature can't be read, so it wasn't kept.".to_string())?;
     if !trusted.contains(&s.key.as_str()) {
         return Err("The update isn't signed by MinnionDeck, so it wasn't kept.".into());
     }
+    if s.v != 2 || s.sig2.is_empty() {
+        return Err("The update is signed the old way, which doesn't say its version, so it wasn't kept.".into());
+    }
     let key = B64.decode(&s.key).map_err(|_| bad())?;
-    let signature = B64.decode(&s.sig).map_err(|_| bad())?;
-    UnparsedPublicKey::new(&ED25519, &key).verify(&message(&s.author, &s.key, &s.files), &signature).map_err(|_| bad())?;
-    if s.files.len() != 1 || s.files.get(installer).is_none_or(|h| !h.eq_ignore_ascii_case(sha256_hex)) {
+    let signature = B64.decode(&s.sig2).map_err(|_| bad())?;
+    let [(name, hash)] = s.files.iter().collect::<Vec<_>>()[..] else { return Err(bad()) };
+    UnparsedPublicKey::new(&ED25519, &key).verify(&release_message(&s.author, &s.key, &s.version, name, hash), &signature).map_err(|_| bad())?;
+    if name != installer || !hash.eq_ignore_ascii_case(sha256_hex) {
         return Err(bad());
+    }
+    // an older installer signed long ago can't be passed off as this release, or as an update
+    if s.version != bare(tag) {
+        return Err(format!("The update says it is version {}, but the release is {}, so it wasn't kept.", s.version, bare(tag)));
+    }
+    if !crate::backend::updates::is_newer(&s.version, running) {
+        return Err(format!("The update is version {}, which isn't newer than this one ({running}), so it wasn't kept.", s.version));
     }
     Ok(s.author.chars().take(40).collect())
 }
 
 /// `verify_release_with` the built-in authors' keys: only they sign MinnionDeck's own updates.
-pub fn verify_release(sig: &[u8], installer: &str, sha256_hex: &str) -> Result<String, String> {
+pub fn verify_release(sig: &[u8], installer: &str, sha256_hex: &str, tag: &str, running: &str) -> Result<String, String> {
     let keys: Vec<&str> = BUILT_IN.iter().map(|(_, k)| *k).collect();
-    verify_release_with(sig, installer, sha256_hex, &keys)
+    verify_release_with(sig, installer, sha256_hex, tag, running, &keys)
 }
 
 /// Where this PC's author key is: the app's own folder, or the Minniondeck app data folder the
@@ -337,24 +421,48 @@ mod tests {
     fn a_release_installer_is_signed_and_only_its_own_signature_passes() {
         let root = std::env::temp_dir().join(format!("md-release-sign-{}", crate::backend::util::now_ms()));
         fs::create_dir_all(&root).unwrap();
-        let exe = root.join("MinnionDeck-0.2.0-x64-setup.exe");
+        let name = "Minniondeck_0.3.0_x64-setup.exe";
+        let exe = root.join(name);
         fs::write(&exe, b"installer bytes").unwrap();
-        assert!(sign_release(&root, &exe).unwrap_err().contains("no author key"));
+        assert!(sign_release(&root, &exe, None).unwrap_err().contains("no author key"));
         let me = read_key_file(&make_key(&root, "Test Author", &root).unwrap()).unwrap();
-        let (_, sig_file) = sign_release(&root, &exe).unwrap();
-        assert_eq!(sig_file, root.join("MinnionDeck-0.2.0-x64-setup.exe.sig"));
+        let k = [me.key.as_str()];
+        // the version comes from the name, or is given
+        let (_, sig_file) = sign_release(&root, &exe, None).unwrap();
+        assert_eq!(sig_file, root.join(format!("{name}.sig")));
         let sig = fs::read(&sig_file).unwrap();
+        assert!(String::from_utf8_lossy(&sig).contains("\"version\": \"0.3.0\""));
         let sha = crate::backend::util::sha256_hex(b"installer bytes");
-        let name = "MinnionDeck-0.2.0-x64-setup.exe";
-        assert_eq!(verify_release_with(&sig, name, &sha, &[me.key.as_str()]).unwrap(), "Test Author");
+        assert_eq!(verify_release_with(&sig, name, &sha, "v0.3.0", "0.2.2", &k).unwrap(), "Test Author");
         // not a built-in author: MinnionDeck's own updates refuse it
-        assert!(verify_release(&sig, name, &sha).unwrap_err().contains("isn't signed by MinnionDeck"));
+        assert!(verify_release(&sig, name, &sha, "v0.3.0", "0.2.2").unwrap_err().contains("isn't signed by MinnionDeck"));
         // another file, other bytes, or a changed signature are refused
-        assert!(verify_release_with(&sig, "Other-setup.exe", &sha, &[me.key.as_str()]).is_err());
-        assert!(verify_release_with(&sig, name, &crate::backend::util::sha256_hex(b"evil"), &[me.key.as_str()]).is_err());
+        assert!(verify_release_with(&sig, "Other-setup.exe", &sha, "v0.3.0", "0.2.2", &k).is_err());
+        assert!(verify_release_with(&sig, name, &crate::backend::util::sha256_hex(b"evil"), "v0.3.0", "0.2.2", &k).is_err());
         let tampered = String::from_utf8(sig.clone()).unwrap().replace("Test Author", "Someone Else");
-        assert!(verify_release_with(tampered.as_bytes(), name, &sha, &[me.key.as_str()]).is_err());
-        assert!(verify_release_with(b"not json", name, &sha, &[me.key.as_str()]).is_err());
+        assert!(verify_release_with(tampered.as_bytes(), name, &sha, "v0.3.0", "0.2.2", &k).is_err());
+        assert!(verify_release_with(b"not json", name, &sha, "v0.3.0", "0.2.2", &k).is_err());
+        // an older signed installer put up under a newer tag, or one not newer than this app: refused
+        assert!(verify_release_with(&sig, name, &sha, "v0.4.0", "0.2.2", &k).unwrap_err().contains("release is 0.4.0"));
+        assert!(verify_release_with(&sig, name, &sha, "v0.3.0", "0.3.0", &k).unwrap_err().contains("isn't newer"));
+        // the version can't be edited in the signature file
+        let relabelled = String::from_utf8(sig.clone()).unwrap().replace("0.3.0", "0.4.0");
+        assert!(verify_release_with(relabelled.as_bytes(), name, &sha, "v0.4.0", "0.2.2", &k).unwrap_err().contains("doesn't match"));
+        // a version-1 signature (no version in it) is refused
+        let (_, v1) = sign(&root, &[(name.to_string(), b"installer bytes".to_vec())]).unwrap().unwrap();
+        assert!(verify_release_with(&v1, name, &sha, "v0.3.0", "0.2.2", &k).unwrap_err().contains("old way"));
+        // and the new .sig still passes the check builds up to 0.2.1 make (author, key and file,
+        // signed by `sig`), so they can update to it
+        let old: SigFile = serde_json::from_slice(&sig).unwrap();
+        let old_ok = UnparsedPublicKey::new(&ED25519, &B64.decode(&old.key).unwrap()).verify(&message(&old.author, &old.key, &old.files), &B64.decode(&old.sig).unwrap()).is_ok();
+        assert!(old_ok && old.files.len() == 1 && old.files[name] == sha, "a 0.2.1 build accepts it");
+        // a version given by hand, and names that say none
+        assert!(sign_release(&root, &exe, Some("v0.3.0")).is_ok());
+        assert!(sign_release(&root, &exe, Some("0.3/0")).is_err());
+        let plain = root.join("setup.exe");
+        fs::write(&plain, b"x").unwrap();
+        assert!(sign_release(&root, &plain, None).unwrap_err().contains("--version"));
+        assert_eq!(version_in_name("Minniondeck_0.2.2_x64-setup.exe").as_deref(), Some("0.2.2"));
         let _ = fs::remove_dir_all(&root);
     }
 }

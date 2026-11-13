@@ -26,7 +26,8 @@ use super::package::{self, Kind, PackageWriter};
 use super::util::{safe_name, write_atomic};
 
 pub const EXT: &str = "mdprofile";
-const MAX_FILE_BYTES: u64 = 600 * 1024 * 1024;
+/// The biggest .mdprofile opened. A profile is buttons and their pictures (25 MB each at most).
+const MAX_FILE_BYTES: u64 = 200 * 1024 * 1024;
 
 #[derive(Default)]
 struct Counts {
@@ -145,7 +146,14 @@ pub(crate) fn build_to_file(bundle: &Value, out: &Path) -> Result<String, String
 fn file_stem(name: &str) -> String {
     let s: String = name.chars().map(|c| if r#"<>:"/\|?*"#.contains(c) || c.is_control() { '-' } else { c }).collect();
     let s = s.trim().trim_end_matches('.').to_string();
-    if s.is_empty() { "Profile".into() } else { s }
+    if s.is_empty() {
+        return "Profile".into();
+    }
+    // names Windows keeps for devices can't be files ("CON.mdprofile" is the console)
+    let base = s.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
+    let reserved = matches!(base.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+        || (base.len() == 4 && (base.starts_with("COM") || base.starts_with("LPT")) && base[3..].chars().all(|c| c.is_ascii_digit() || "¹²³".contains(c)));
+    if reserved { format!("{s} profile") } else { s }
 }
 
 fn with_ext(mut path: PathBuf) -> PathBuf {
@@ -212,11 +220,18 @@ fn unpack_tree(nodes: &Value, pkg: &package::Package) -> Result<Value, String> {
 }
 
 /// Copy a package's pictures or GIFs into the library under new names
-fn unpack_media(media_dir: &Path, items: &Value, pkg: &package::Package) -> Result<Value, String> {
+fn unpack_media(media_dir: Option<&Path>, items: &Value, pkg: &package::Package, kind: super::media::Kind) -> Result<Value, String> {
     let mut out = Vec::new();
     for item in items.as_array().into_iter().flatten() {
         let Some(path) = item["media"].as_str() else { continue };
         let bytes = pkg.get(path).ok_or_else(|| format!("{path} is missing from the file."))?;
+        // the same checks as a picture imported by hand: its kind, its size, and that it opens
+        super::media::check(bytes, kind).map_err(|e| format!("{path}: {e}"))?;
+        // only looking: nothing is written
+        let Some(media_dir) = media_dir else {
+            out.push(item.clone());
+            continue;
+        };
         let original = path.rsplit('/').next().and_then(safe_name).unwrap_or("file.png");
         let mut tag = [0u8; 4];
         OsRng.fill_bytes(&mut tag);
@@ -234,13 +249,14 @@ fn read_profile(bytes: &[u8]) -> Result<package::Package, String> {
     package::read(&package::open(bytes, Kind::Profile)?, Kind::Profile)
 }
 
-/// Copy the package's pictures and GIFs into the media folder and rebuild the profile the way the UI holds it
-fn unpack(media_dir: &Path, pkg: &package::Package) -> Result<Value, String> {
+/// Copy the package's pictures and GIFs into the media folder (None: only check them) and rebuild
+/// the profile the way the UI holds it
+fn unpack(media_dir: Option<&Path>, pkg: &package::Package) -> Result<Value, String> {
     let mut profile = pkg.json("profile.json")?;
     profile["tree"] = unpack_tree(&profile["tree"], pkg)?;
     let assets = pkg.json_or("assets/assets.json", json!({}))?;
-    let images = unpack_media(media_dir, &assets["images"], pkg)?;
-    let gif_files = unpack_media(media_dir, &assets["gifFiles"], pkg)?;
+    let images = unpack_media(media_dir, &assets["images"], pkg, super::media::Kind::Picture)?;
+    let gif_files = unpack_media(media_dir, &assets["gifFiles"], pkg, super::media::Kind::Gif)?;
     Ok(json!({
         "manifest": { "name": pkg.manifest.name, "contents": pkg.manifest.contents, "created": pkg.manifest.created_ms },
         "profile": profile,
@@ -255,13 +271,25 @@ fn unpack(media_dir: &Path, pkg: &package::Package) -> Result<Value, String> {
 /// Open and check a .mdprofile and copy its pictures and GIFs into the media folder. Returns the
 /// profile as the window holds it; the library gives everything new IDs and adds it.
 pub fn import_from(media_dir: &Path, path: &Path) -> Result<Value, String> {
+    unpack(Some(media_dir), &open_file(path)?)
+}
+
+/// Opens and checks a .mdprofile without writing anything: the profile as `import_from` gives it,
+/// but its pictures stay in the file (for looking at a profile before deciding to add it).
+pub fn inspect_from(path: &Path) -> Result<Value, String> {
+    unpack(None, &open_file(path)?)
+}
+
+/// Reads, decrypts and unzips a .mdprofile, letting go of each step's copy as soon as it is done.
+fn open_file(path: &Path) -> Result<package::Package, String> {
     let size = fs::metadata(path).map_err(|_| "That file could not be opened.".to_string())?.len();
     if size > MAX_FILE_BYTES {
         return Err("That file is too large.".into());
     }
     let bytes = fs::read(path).map_err(|_| "That file could not be opened.".to_string())?;
-    let pkg = read_profile(&bytes)?;
-    unpack(media_dir, &pkg)
+    let zip = package::open(&bytes, Kind::Profile)?;
+    drop(bytes);
+    package::read(&zip, Kind::Profile)
 }
 
 #[cfg(test)]
@@ -281,6 +309,12 @@ mod tests {
     fn exported_names_are_safe_file_names() {
         assert_eq!(file_stem("Live: show/1?"), "Live- show-1-");
         assert_eq!(file_stem("   "), "Profile");
+        // names Windows keeps for devices
+        for name in ["CON", "con", "Nul", "AUX.txt", "COM1", "lpt9", "PRN "] {
+            assert!(file_stem(name).ends_with(" profile"), "{name}: {}", file_stem(name));
+        }
+        assert_eq!(file_stem("Console"), "Console");
+        assert_eq!(file_stem("COM10"), "COM10");
     }
 
     fn temp_dir(tag: &str) -> PathBuf {
@@ -292,7 +326,7 @@ mod tests {
     #[test]
     fn a_profile_survives_export_and_import() {
         let (from, to) = (temp_dir("from"), temp_dir("to"));
-        fs::write(from.join("u-1-abc.png"), [1u8, 2, 3]).unwrap();
+        fs::write(from.join("u-1-abc.png"), crate::backend::media::tiny_png()).unwrap();
         let bundle = json!({
             "profile": { "id": "pr1", "name": "Streaming", "body": "mint", "icon": "star", "auto": "OBS Studio", "tree": [
                 { "kind": "page", "id": "p1", "name": "Main", "board": "B1", "cols": 4, "rows": 3 },
@@ -318,7 +352,11 @@ mod tests {
         // The file's tree points at page files instead of holding buttons
         assert_eq!(pkg.json("profile.json").unwrap()["tree"][0]["file"], "pages/main.json");
 
-        let out = unpack(&to, &pkg).unwrap();
+        // looking at it writes nothing, and gives the same profile
+        let look = unpack(None, &pkg).unwrap();
+        assert!(fs::read_dir(&to).unwrap().next().is_none(), "nothing written by looking");
+        let out = unpack(Some(&to), &pkg).unwrap();
+        assert_eq!(look["profile"], out["profile"]);
         let tree = &out["profile"]["tree"];
         assert_eq!(tree[0]["buttons"][0]["steps"][0]["f"]["scene"], "BRB");
         assert_eq!(tree[0]["cols"], 4);
@@ -328,7 +366,7 @@ mod tests {
         assert_eq!(out["plugins"], json!(["OBS"]));
         let media = out["images"][0]["media"].as_str().unwrap();
         assert!(media.starts_with("imp-") && media.ends_with("u-1-abc.png"));
-        assert_eq!(crate::backend::media::read_named(&to, media).unwrap(), [1u8, 2, 3]);
+        assert_eq!(crate::backend::media::read_named(&to, media).unwrap(), crate::backend::media::tiny_png());
         let _ = (fs::remove_dir_all(from), fs::remove_dir_all(to));
     }
 

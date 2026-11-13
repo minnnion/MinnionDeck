@@ -18,6 +18,8 @@ pub struct PhoneGlue {
     pub hub: Option<Arc<Hub>>,
     rx: Option<Receiver<PhoneEvent>>,
     snap_at: f64,
+    /// What the deck sent to phones was made from (see `snapshot_key`)
+    snap_key: u64,
     /// Why the phone page isn't running, when it isn't
     pub error: Option<String>,
     /// The QR for an address
@@ -27,7 +29,7 @@ pub struct PhoneGlue {
 impl PhoneGlue {
     /// Starts the phone page (not for screenshots or self-tests).
     pub fn start(root: &std::path::Path, ctx: &egui::Context, run: bool) -> PhoneGlue {
-        let mut g = PhoneGlue { hub: None, rx: None, snap_at: 0.0, error: None, qr: None };
+        let mut g = PhoneGlue { hub: None, rx: None, snap_at: 0.0, snap_key: 0, error: None, qr: None };
         if run {
             let (tx, rx) = channel();
             let c = ctx.clone();
@@ -54,6 +56,12 @@ impl PhoneGlue {
     }
 }
 
+/// "Allow the plain http page" for an install that hasn't said: on only when phones are already
+/// paired (they may have been paired over http, and would otherwise have to be paired again).
+fn plain_default(has_phones: bool) -> usize {
+    has_phones as usize
+}
+
 fn hex(c: egui::Color32) -> String {
     format!("#{:02x}{:02x}{:02x}", c.r(), c.g(), c.b())
 }
@@ -70,6 +78,30 @@ fn ago(ms: u64) -> String {
 }
 
 impl App {
+    /// Once, when the settings have been read: whether the plain http page is allowed. An install
+    /// that never said (it comes from before 0.2.2) keeps it when phones are already paired, so
+    /// they go on working; a new install starts with HTTPS only. The answer is saved.
+    pub fn init_phone_link(&mut self) {
+        let Some(hub) = self.phones.hub.clone() else { return };
+        if !self.st.contains_key("plain") {
+            self.st.insert("plain", plain_default(!hub.phones().is_empty()));
+        }
+        hub.secure_link.store(self.st.get("secure").is_none_or(|v| *v == 1), std::sync::atomic::Ordering::Relaxed);
+        hub.plain_ok.store(self.st.get("plain").is_some_and(|v| *v == 1), std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// A hash of everything the phone deck is made from: the pages and buttons (with what plugins
+    /// show on them), the page and profile shown, the theme and the phone settings.
+    fn snapshot_key(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        let on = |k: &str| self.st.get(k).copied();
+        (&self.sample.pages, &self.sample.tiles, self.sample.page, self.sample.active, self.dark).hash(&mut h);
+        self.sample.profiles.get(self.sample.active).map(|p| &p.name).hash(&mut h);
+        ["follow", "names", "vibe", "awake"].map(on).hash(&mut h);
+        h.finish()
+    }
+
     /// The deck as the phone page draws it: the profile in use, its pages and every button's face now.
     pub fn phone_snapshot(&self) -> Value {
         let th = self.theme();
@@ -137,7 +169,8 @@ impl App {
     pub fn pump_phones(&mut self, now: f64) {
         let Some(hub) = self.phones.hub.clone() else { return };
         hub.require_match.store(self.st.get("match").map(|v| *v == 1).unwrap_or(true), std::sync::atomic::Ordering::Relaxed);
-        hub.secure_link.store(self.st.get("secure").is_some_and(|v| *v == 1), std::sync::atomic::Ordering::Relaxed);
+        hub.secure_link.store(self.st.get("secure").is_none_or(|v| *v == 1), std::sync::atomic::Ordering::Relaxed);
+        hub.plain_ok.store(self.st.get("plain").is_some_and(|v| *v == 1), std::sync::atomic::Ordering::Relaxed);
         let mut events = vec![];
         if let Some(rx) = &self.phones.rx {
             while let Ok(e) = rx.try_recv() {
@@ -166,13 +199,26 @@ impl App {
                 .collect();
             crate::backend::tray::set_phones(hub.connected());
         }
-        // the deck, for phones that are in
-        if hub.connected() > 0 && now - self.phones.snap_at >= SNAPSHOT_EVERY {
+        // the deck, for phones that are in: looked at with each frame (every change comes with one),
+        // at most 10 times a second, and made and sent only when something in it changed
+        let connected = hub.connected() > 0;
+        if !connected {
+            // a phone that comes in gets the deck as it is then
+            self.phones.snap_key = 0;
+        } else if now - self.phones.snap_at >= SNAPSHOT_EVERY {
             self.phones.snap_at = now;
-            hub.set_snapshot(self.phone_snapshot().to_string());
+            let key = self.snapshot_key();
+            if key != self.phones.snap_key {
+                self.phones.snap_key = key;
+                hub.set_snapshot(self.phone_snapshot().to_string());
+            }
+        } else {
+            // a change in the last moment is looked at once more, a moment later
+            self.egui.request_repaint_after(std::time::Duration::from_secs_f64(SNAPSHOT_EVERY - (now - self.phones.snap_at)));
         }
-        if !hub.pending().is_empty() || hub.connected() > 0 {
-            self.egui.request_repaint_after(std::time::Duration::from_millis(250));
+        // a phone waiting for Allow: the list ages (a request runs out after a while)
+        if !hub.pending().is_empty() {
+            self.egui.request_repaint_after(std::time::Duration::from_millis(500));
         }
     }
 
@@ -195,9 +241,11 @@ impl App {
         // what a plugin hears about the button: its look as it is now, before this press moves it on
         let ctx = ButtonCtx { id: t.id.clone(), state: t.look_now() };
         let (hub, device) = (hub.clone(), device.to_string());
+        const NOT_ALLOWED: &str = "Buttons from an imported profile need to be allowed on the PC first.";
         match kind {
+            // letting go never asks: nothing is sent for a button that wasn't allowed
             Kind::Release => {
-                if plug {
+                if plug && !self.lib.asks_before(&steps) {
                     std::thread::spawn(move || {
                         let _ = plugins::button_event("release", &ctx, &steps, None);
                     });
@@ -205,12 +253,18 @@ impl App {
             }
             Kind::Turn(by) => {
                 if plug && by != 0 {
+                    if !self.allow_press(&steps, now) {
+                        return tell(&hub, &device, Err(NOT_ALLOWED.into()));
+                    }
                     std::thread::spawn(move || {
                         let _ = plugins::button_event("turn", &ctx, &steps, Some(&json!({ "by": by })));
                     });
                 }
             }
             Kind::Long if plug => {
+                if !self.allow_press(&steps, now) {
+                    return tell(&hub, &device, Err(NOT_ALLOWED.into()));
+                }
                 std::thread::spawn(move || {
                     let r = plugins::button_event("long_press", &ctx, &steps, None).map_err(|e| format!("{}: {e}", if t.label.is_empty() { "The button" } else { &t.label }));
                     tell(&hub, &device, r);
@@ -225,12 +279,8 @@ impl App {
                 if (t.action == "page" || t.action == "back") && steps.len() <= 1 {
                     return;
                 }
-                if self.lib.needs_trust() && crate::backend::actions::risky(&steps) {
-                    let name = self.sample.profiles.get(self.sample.active).map(|p| p.name.clone()).unwrap_or_default();
-                    if !crate::backend::actions::allow_imported(&name) {
-                        return tell(&hub, &device, Err("Buttons from an imported profile need to be allowed on the PC first.".into()));
-                    }
-                    self.lib.trust();
+                if !self.allow_press(&steps, now) {
+                    return tell(&hub, &device, Err(NOT_ALLOWED.into()));
                 }
                 // the button moves to its next look, like a press on the PC (a plugin that owns its looks does it itself)
                 let n = t.looks();

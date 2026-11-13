@@ -28,6 +28,17 @@ impl<'a> Cv<'a> {
 
     /// An `input`: click to focus, type to edit. The caret blinks while it has focus.
     pub fn text_field(&mut self, id: &str, x: f32, y: f32, w: f32, h: f32, value: &mut String, size: f32, placeholder: &str) {
+        self.field(id, x, y, w, h, value, size, placeholder, false)
+    }
+
+    /// A text field that shows a star for each character (passwords).
+    #[allow(clippy::too_many_arguments)]
+    pub fn password_field(&mut self, id: &str, x: f32, y: f32, w: f32, h: f32, value: &mut String, size: f32, placeholder: &str) {
+        self.field(id, x, y, w, h, value, size, placeholder, true)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn field(&mut self, id: &str, x: f32, y: f32, w: f32, h: f32, value: &mut String, size: f32, placeholder: &str, masked: bool) {
         let th = self.th;
         let fid = Id::new((self.id_base, id));
         let resp = self.hit(id, x, y, w, h);
@@ -53,17 +64,18 @@ impl<'a> Cv<'a> {
         let lh = (size * 1.35 * 100.0).round() / 100.0;
         let ty = y + (h - lh) / 2.0;
         let max = w - 22.0;
+        let visible = if masked { "*".repeat(value.chars().count()) } else { value.clone() };
         if value.is_empty() {
             self.text_fit(x + 11.0, ty, lh, size, 400, th.slate, placeholder, max);
         } else {
-            let mut shown = value.clone();
+            let mut shown = visible.clone();
             while self.measure(size, 400, &shown) > max && shown.chars().count() > 1 {
                 shown.remove(0);
             }
             self.text(x + 11.0, ty, lh, size, 400, th.ink, &shown);
         }
         if focused && (self.now() * 2.0) as i64 % 2 == 0 {
-            let tw = if value.is_empty() { 0.0 } else { self.measure(size, 400, value).min(max) };
+            let tw = if value.is_empty() { 0.0 } else { self.measure(size, 400, &visible).min(max) };
             self.fill(x + 11.0 + tw, ty + 1.0, 2.0, lh - 2.0, th.ink);
         }
     }

@@ -1,3 +1,4 @@
+pub mod author_dialog;
 pub mod choose_pages;
 pub mod deck;
 pub mod editor;
@@ -5,6 +6,7 @@ pub mod install_dialog;
 pub mod marketplace;
 pub mod phones;
 pub mod plugin_dialog;
+pub mod portable_dialog;
 pub mod profile_update;
 pub mod profiles;
 pub mod settings;

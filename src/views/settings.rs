@@ -99,7 +99,8 @@ fn sections(tab: usize, _app: &App) -> Vec<Section> {
                 r("Connect over", "Phones connect over Wi-Fi. USB and Both are coming soon.", Seg("conn", &["Wi-Fi", "USB", "Both"], 0)),
                 r("Port", "Change this only if another app uses it.", Select("port", "8765")),
                 r("Show a matching number when a new phone pairs", "Check the same number shows on both before you accept.", Switch("match", true)),
-                r("Secure phone link", "The QR code opens the HTTPS page, so nobody else on the Wi-Fi can read what phones send. The phone warns about the certificate once.", Switch("secure", false)),
+                r("Secure phone link", "The QR code opens the HTTPS page, so nobody else on the Wi-Fi can read what phones send. The phone warns about the certificate once.", Switch("secure", true)),
+                r("Allow the plain http page", "For phones paired over http:// before version 0.2.2. Off: the http address only sends phones to the HTTPS page. On a Wi-Fi you share, pair your phones again with the QR code, then turn this off.", Switch("plain", false)),
             ]),
             sec("On the phone", vec![
                 r("Phones follow the page open on this PC", "", Switch("follow", true)),
@@ -123,8 +124,12 @@ fn sections(tab: usize, _app: &App) -> Vec<Section> {
             ]),
             sec_x("Restore a backup", vec![], Extra::Backups),
             sec("Files", vec![
-                r("Backups folder", "Backups are encrypted, so they only open in Minniondeck.", Button("bkfolder", "Open folder")),
+                r("Backups folder", "Backups are encrypted with this PC's own key: they open only in MinnionDeck on this Windows account.", Button("bkfolder", "Open folder")),
                 r("", "", Button("bkexport", "Export all profiles…")),
+            ]),
+            sec("Move to another PC", vec![
+                r("Password backup", "Ordinary backups don't open after Windows is installed again or on another PC. A password backup does, with the password you choose. Keep the password safe: without it the backup can't be opened.", Button("bkportable", "Save a password backup…")),
+                r("", "", Button("bkportin", "Restore a password backup…")),
             ]),
         ],
         6 => vec![
@@ -431,8 +436,15 @@ fn draw_row(app: &mut App, cv: &mut Cv, tab: usize, k: usize, n: usize, x: f32, 
         Ctl::Switch(key, default) => {
             let on = app.st.get(key).map(|v| *v == 1).unwrap_or(*default);
             if !row.soon && cv.switch(&key_id, cx, cy, on) {
-                app.st.insert(key, if on { 0 } else { 1 });
-                app.settings_saved = Some((key, now));
+                // Developer mode lets plugins nobody vouched for run: asked before it goes on
+                let sure = *key != "dev" || on || crate::backend::actions::confirm(
+                    "Turn on Developer mode?",
+                    "Plugins that aren't signed by an author you trust will run, with everything you can do on this PC.\n\nTurn it on only while you build or test plugins you trust.",
+                );
+                if sure {
+                    app.st.insert(key, if on { 0 } else { 1 });
+                    app.settings_saved = Some((key, now));
+                }
             } else if row.soon {
                 cv.fill(cx, cy, 60.0, 40.0, th.panel);
                 cv.border(cx, cy, 60.0, 40.0, 4.0, th.rule);
@@ -517,6 +529,7 @@ fn button_action(app: &mut App, id: &str, now: f64) {
         "market" => app.pending_view = Some(crate::app::View::Marketplace),
         "pushphone" => app.say("Sending the phone app isn't connected yet", now),
         "bkexport" => app.start_export_all(now),
+        "bkportable" | "bkportin" => app.portable = Some(crate::views::portable_dialog::PortableAsk::new(id == "bkportable")),
         "bkfolder" | "plugfolder" => {
             let dir = if id == "bkfolder" { app.lib.paths.backups.clone() } else { app.lib.paths.root.join("plugins") };
             let _ = std::fs::create_dir_all(&dir);

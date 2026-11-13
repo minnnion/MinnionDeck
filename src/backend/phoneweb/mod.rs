@@ -7,13 +7,19 @@
 //!   pics.rs    icons and GIFs for the page, made on the PC
 //!   mod.rs     the hub: paired phones, the pairing code, who is connected, the latest deck
 //!
-//! Two doors: a plain http:// page (what the QR opens: nothing to warn about) and the same page over
-//! https:// on the next port (scrambled on the Wi-Fi; a phone warns once about the certificate).
+//! Two doors: the page over https:// (what the QR opens: scrambled on the Wi-Fi; a phone warns once
+//! about the certificate) and, one port below, a plain http:// door. The plain door only sends
+//! phones on to the HTTPS page, unless "Allow the plain http page" is on in Settings › Phones (it is
+//! switched on by itself for installs that already had phones paired, so they keep working). Both
+//! doors listen only on this PC's own Wi-Fi/LAN addresses and on localhost, never on every network
+//! the PC is on.
 //!
-//! Pairing: the QR holds the page's address and a 6-digit code (valid 10 minutes, a few wrong
-//! tries). The phone sends the code and its name; the PC shows a number to compare and Allow; the
-//! phone then keeps its own long key, which is the only thing that lets it in again. Forget on the
-//! PC takes it away.
+//! Pairing: the QR holds the page's address and a 6-digit code (valid 10 minutes; a few wrong tries
+//! lock that phone's address out for a minute, and many wrong tries from anywhere make a new code).
+//! The phone sends the code and its name; the PC shows a number to compare and Allow; the phone
+//! then keeps its own long key, which is the only thing that lets it in again. The key is only ever
+//! sent inside the WebSocket; pictures are fetched with a short-lived ticket the PC hands out there.
+//! Forget on the PC takes the phone away.
 #![allow(dead_code)]
 
 pub mod cert;
@@ -22,7 +28,7 @@ mod server;
 
 use std::collections::HashMap;
 use std::fs;
-use std::net::{IpAddr, TcpListener};
+use std::net::{IpAddr, Ipv4Addr, TcpListener};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
@@ -41,6 +47,15 @@ use crate::backend::vault;
 const CODE_LIFE: Duration = Duration::from_secs(600);
 const MAX_WRONG: u32 = 5;
 const LOCKOUT: Duration = Duration::from_secs(60);
+/// Wrong codes from every address together before the code is replaced (so guessing never adds up)
+const MAX_WRONG_TOTAL: u32 = 30;
+/// Phones waiting for Allow at once, and how long one may wait
+const MAX_PENDING: usize = 8;
+pub(crate) const PAIR_WAIT: Duration = Duration::from_secs(120);
+/// How long a picture ticket opens the page's pictures (a phone that is connected gets a new one in time)
+pub(crate) const TICKET_LIFE: Duration = Duration::from_secs(12 * 3600);
+/// How often this PC's addresses are looked at again (Wi-Fi that came up after the app started)
+const ADDRESS_CHECK: Duration = Duration::from_secs(5);
 pub const DEFAULT_PORT: u16 = 47800;
 
 /// What a phone did to a button.
@@ -80,6 +95,8 @@ struct Conn {
     outbox: Sender<Out>,
     device: Option<String>,
     page: String,
+    /// Where it connected from (wrong codes are counted for each address)
+    peer: IpAddr,
 }
 
 struct Pending {
@@ -88,6 +105,14 @@ struct Pending {
     model: String,
     tablet: bool,
     number: String,
+    since: Instant,
+}
+
+/// Wrong codes from one address
+#[derive(Default)]
+struct Guesses {
+    wrong: u32,
+    locked_until: Option<Instant>,
 }
 
 struct Code {
@@ -103,8 +128,29 @@ struct State {
     devices: Vec<Device>,
     pending: Vec<Pending>,
     code: Code,
-    wrong: u32,
-    locked_until: Option<Instant>,
+    /// Wrong codes, by the address they came from, and all together since the code was made
+    guesses: HashMap<IpAddr, Guesses>,
+    wrong_total: u32,
+    /// Picture tickets: ticket → (the phone it was made for, when)
+    tickets: HashMap<String, (String, Instant)>,
+}
+
+impl State {
+    fn renew_code(&mut self) {
+        self.code = new_code();
+        self.wrong_total = 0;
+    }
+
+    /// A ticket for a phone's pictures: the one it has while that is young, else a new one.
+    fn ticket_for(&mut self, device: &str) -> String {
+        self.tickets.retain(|_, (_, made)| made.elapsed() < TICKET_LIFE);
+        if let Some((k, _)) = self.tickets.iter().find(|(_, (d, made))| d == device && made.elapsed() < TICKET_LIFE / 2) {
+            return k.clone();
+        }
+        let k = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(random_bytes(18));
+        self.tickets.insert(k.clone(), (device.to_string(), Instant::now()));
+        k
+    }
 }
 
 /// One phone as the Phones page lists it.
@@ -131,17 +177,17 @@ pub struct PendingRow {
 pub enum PairResult {
     /// Compare this number with the one on the PC, then Allow
     Waiting(String),
-    Approved { token: String, name: String },
+    Approved { token: String, name: String, ticket: String },
     Refused(String),
 }
 
 pub struct Hub {
     st: Mutex<State>,
-    /// The plain port (what the QR opens) and the HTTPS one (0 when there is no certificate)
+    /// The plain port and the HTTPS one (what the QR opens; 0 when there is no certificate)
     pub port: u16,
     pub tls_port: u16,
-    /// This PC's addresses on the network, the best first
-    pub addrs: Vec<String>,
+    /// This PC's addresses on the network, the best first (looked at again every few seconds)
+    addrs: Mutex<Vec<String>>,
     file: PathBuf,
     events: Mutex<Sender<PhoneEvent>>,
     repaint: Box<dyn Fn() + Send + Sync>,
@@ -149,6 +195,9 @@ pub struct Hub {
     pub require_match: AtomicBool,
     /// The QR opens the HTTPS page (Settings › Phones › Secure phone link)
     pub secure_link: AtomicBool,
+    /// The plain http page works too (Settings › Phones › Allow the plain http page); otherwise the
+    /// plain port only sends phones to the HTTPS page
+    pub plain_ok: AtomicBool,
     next_id: AtomicU64,
 }
 
@@ -205,14 +254,16 @@ pub fn start(root: &Path, want_port: u16, events: Sender<PhoneEvent>, repaint: i
     let dir = root.join("phones");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let addrs = lan_addresses();
+    // only this PC's own addresses on the local network, and localhost: not every network it is on
+    let ips = listen_addresses(&addrs);
     let bind_from = |from: u16| {
         (0..10u16).find_map(|i| {
             let p = from.checked_add(i)?;
-            TcpListener::bind(("0.0.0.0", p)).ok().map(|l| (l, p))
+            ips.iter().map(|ip| TcpListener::bind((*ip, p)).ok()).collect::<Option<Vec<TcpListener>>>().map(|l| (l, p))
         })
     };
-    let (listener, port) = bind_from(want_port).ok_or_else(|| format!("No port from {want_port} to {} is free for the phone page.", want_port.saturating_add(9)))?;
-    // the HTTPS page is the safer way in; if its certificate can't be made, the plain page still works
+    let (listeners, port) = bind_from(want_port).ok_or_else(|| format!("No port from {want_port} to {} is free for the phone page.", want_port.saturating_add(9)))?;
+    // the HTTPS page is the safe way in; if its certificate can't be made, the plain page still works
     let secure = cert::load_or_make(&dir, &addrs).ok().and_then(|tls| bind_from(port.saturating_add(1)).map(|(l, p)| (l, p, tls)));
     let tls_port = secure.as_ref().map(|(_, p, _)| *p).unwrap_or(0);
     // the paired phones, sealed (a plain devices.json from an earlier version is sealed first)
@@ -228,21 +279,70 @@ pub fn start(root: &Path, want_port: u16, events: Sender<PhoneEvent>, repaint: i
             devices,
             pending: vec![],
             code: new_code(),
-            wrong: 0,
-            locked_until: None,
+            guesses: HashMap::new(),
+            wrong_total: 0,
+            tickets: HashMap::new(),
         }),
         port,
         tls_port,
-        addrs,
+        addrs: Mutex::new(addrs.clone()),
         file,
         events: Mutex::new(events),
         repaint: Box::new(repaint),
         require_match: AtomicBool::new(true),
-        secure_link: AtomicBool::new(false),
+        secure_link: AtomicBool::new(true),
+        plain_ok: AtomicBool::new(false),
         next_id: AtomicU64::new(1),
     });
-    server::serve(hub.clone(), listener, secure.map(|(l, _, tls)| (l, tls)));
+    let (tls, secure_listeners) = match secure {
+        Some((l, _, tls)) => (Some(tls), l),
+        None => (None, vec![]),
+    };
+    let doors = server::Doors::new(hub.clone(), tls);
+    for l in listeners {
+        doors.listen(l, false);
+    }
+    for l in secure_listeners {
+        doors.listen(l, true);
+    }
+    watch_addresses(hub.clone(), doors, addrs);
     Ok(hub)
+}
+
+/// The addresses the doors listen on: localhost and each LAN address.
+fn listen_addresses(lan: &[String]) -> Vec<IpAddr> {
+    let mut ips = vec![IpAddr::V4(Ipv4Addr::LOCALHOST)];
+    ips.extend(lan.iter().filter_map(|a| a.parse::<IpAddr>().ok()));
+    ips
+}
+
+/// The PC may get its Wi-Fi address after the app has started (it starts with Windows), or a new
+/// one later: the doors open on each new address, and the Phones page shows the address in use.
+fn watch_addresses(hub: Arc<Hub>, doors: Arc<server::Doors>, mut bound: Vec<String>) {
+    let _ = std::thread::Builder::new().name("phone addresses".into()).spawn(move || {
+        loop {
+            std::thread::sleep(ADDRESS_CHECK);
+            let now = lan_addresses();
+            for a in now.iter().filter(|a| !bound.contains(a)).cloned().collect::<Vec<_>>() {
+                let Ok(ip) = a.parse::<IpAddr>() else { continue };
+                // both doors or neither, so the address on screen always works
+                let plain = TcpListener::bind((ip, hub.port));
+                let secure = (hub.tls_port != 0).then(|| TcpListener::bind((ip, hub.tls_port)));
+                match (plain, secure) {
+                    (Ok(p), None) => doors.listen(p, false),
+                    (Ok(p), Some(Ok(s))) => {
+                        doors.listen(p, false);
+                        doors.listen(s, true);
+                    }
+                    _ => continue,
+                }
+                bound.push(a);
+            }
+            if !now.is_empty() && hub.set_addrs(now) {
+                hub.emit(PhoneEvent::Changed);
+            }
+        }
+    });
 }
 
 impl Hub {
@@ -262,11 +362,34 @@ impl Hub {
 
     // ----- the address and the code -----
 
+    /// This PC's addresses on the network, the best first.
+    pub fn addrs(&self) -> Vec<String> {
+        self.addrs.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// True when they changed.
+    fn set_addrs(&self, addrs: Vec<String>) -> bool {
+        let mut a = self.addrs.lock().unwrap_or_else(|e| e.into_inner());
+        let changed = *a != addrs;
+        *a = addrs;
+        changed
+    }
+
+    fn host(&self) -> String {
+        self.addrs().into_iter().next().unwrap_or_else(|| "localhost".into())
+    }
+
+    /// Whether the plain http page is served (else the plain port only points at the HTTPS page).
+    /// Without a certificate there is no HTTPS page, so the plain one is all there is.
+    pub fn plain_served(&self) -> bool {
+        self.tls_port == 0 || self.plain_ok.load(Ordering::Relaxed)
+    }
+
     /// The code on screen now, made again when it ran out.
     pub fn code(&self) -> String {
         let mut st = lock(&self.st);
         if st.code.made.elapsed() > CODE_LIFE {
-            st.code = new_code();
+            st.renew_code();
         }
         st.code.code.clone()
     }
@@ -276,23 +399,23 @@ impl Hub {
         format!("{}#{}", self.page_url(), self.code())
     }
 
-    /// The page the QR and the Phones page point to: HTTPS when Secure phone link is on (and
-    /// there is a certificate), else the plain page.
+    /// The page the QR and the Phones page point to: the HTTPS page, unless there is no
+    /// certificate, or the plain page is allowed and Secure phone link is off.
     pub fn page_url(&self) -> String {
         match self.secure_url() {
-            Some(s) if self.secure_link.load(Ordering::Relaxed) => s,
+            Some(s) if self.secure_link.load(Ordering::Relaxed) || !self.plain_served() => s,
             _ => self.base_url(),
         }
     }
 
-    /// The page a phone opens: plain http, so a phone shows no certificate warning.
+    /// The plain http page: no certificate warning, but everything crosses the Wi-Fi readable.
     pub fn base_url(&self) -> String {
-        format!("http://{}:{}/", self.addrs.first().map(|s| s.as_str()).unwrap_or("localhost"), self.port)
+        format!("http://{}:{}/", self.host(), self.port)
     }
 
     /// The same page over HTTPS (traffic on the Wi-Fi is scrambled, but a phone warns once).
     pub fn secure_url(&self) -> Option<String> {
-        (self.tls_port != 0).then(|| format!("https://{}:{}/", self.addrs.first().map(|s| s.as_str()).unwrap_or("localhost"), self.tls_port))
+        (self.tls_port != 0).then(|| format!("https://{}:{}/", self.host(), self.tls_port))
     }
 
     // ----- the deck the phones show -----
@@ -350,6 +473,7 @@ impl Hub {
     pub fn forget(&self, device: &str) {
         let mut st = lock(&self.st);
         st.devices.retain(|d| d.id != device);
+        st.tickets.retain(|_, (d, _)| d != device);
         for c in st.conns.values_mut().filter(|c| c.device.as_deref() == Some(device)) {
             let _ = c.outbox.send(Out::Text(json!({ "t": "forgotten" }).to_string()));
             let _ = c.outbox.send(Out::Close);
@@ -367,12 +491,13 @@ impl Hub {
         let p = st.pending.remove(i);
         let (tok, id) = (token(), format!("ph{}-{}", now_ms(), self.next_id.fetch_add(1, Ordering::Relaxed)));
         st.devices.push(Device { id: id.clone(), name: p.name.clone(), model: p.model, tablet: p.tablet, token_hash: sha256_hex(tok.as_bytes()), added_ms: now_ms(), last_seen_ms: now_ms(), });
+        let ticket = st.ticket_for(&id);
         if let Some(c) = st.conns.get_mut(&conn) {
             c.device = Some(id);
-            let _ = c.outbox.send(Out::Text(json!({ "t": "paired", "token": tok, "name": p.name }).to_string()));
+            let _ = c.outbox.send(Out::Text(json!({ "t": "paired", "token": tok, "name": p.name, "ticket": ticket }).to_string()));
         }
         // the code was used: the next phone gets a new one
-        st.code = new_code();
+        st.renew_code();
         self.save(&st);
         drop(st);
         self.emit(PhoneEvent::Changed);
@@ -401,11 +526,11 @@ impl Hub {
 
     // ----- used by the server -----
 
-    pub(crate) fn register(&self, outbox: Sender<Out>) -> u64 {
+    pub(crate) fn register(&self, outbox: Sender<Out>, peer: IpAddr) -> u64 {
         let mut st = lock(&self.st);
         let id = st.next_conn;
         st.next_conn += 1;
-        st.conns.insert(id, Conn { outbox, device: None, page: String::new() });
+        st.conns.insert(id, Conn { outbox, device: None, page: String::new(), peer });
         id
     }
 
@@ -433,10 +558,34 @@ impl Hub {
         Some(name)
     }
 
-    /// Whether a long key belongs to a paired phone (for the page's pictures).
-    pub(crate) fn token_ok(&self, tok: &str) -> bool {
-        let hash = sha256_hex(tok.as_bytes());
-        lock(&self.st).devices.iter().any(|d| d.token_hash == hash)
+    /// The picture ticket for the phone on this connection (None when it isn't in).
+    pub(crate) fn ticket(&self, conn: u64) -> Option<String> {
+        let mut st = lock(&self.st);
+        let device = st.conns.get(&conn)?.device.clone()?;
+        Some(st.ticket_for(&device))
+    }
+
+    /// Whether a picture ticket is good: handed to a phone that is still paired, and not too old.
+    pub(crate) fn ticket_ok(&self, ticket: &str) -> bool {
+        let st = lock(&self.st);
+        st.tickets.get(ticket).is_some_and(|(device, made)| made.elapsed() < TICKET_LIFE && st.devices.iter().any(|d| d.id == *device))
+    }
+
+    /// Whether this connection is waiting for Allow. One that waited too long is taken off the
+    /// list and told (false then, as for one that isn't waiting).
+    pub(crate) fn waiting(&self, conn: u64) -> bool {
+        let mut st = lock(&self.st);
+        let Some(i) = st.pending.iter().position(|p| p.conn == conn) else { return false };
+        if st.pending[i].since.elapsed() <= PAIR_WAIT {
+            return true;
+        }
+        st.pending.remove(i);
+        if let Some(c) = st.conns.get(&conn) {
+            let _ = c.outbox.send(Out::Text(json!({ "t": "refused", "message": "The PC didn't answer in time. Try again." }).to_string()));
+        }
+        drop(st);
+        self.emit(PhoneEvent::Changed);
+        false
     }
 
     pub(crate) fn device_of(&self, conn: u64) -> Option<String> {
@@ -445,7 +594,8 @@ impl Hub {
 
     pub(crate) fn set_page(&self, conn: u64, page: &str) {
         let mut st = lock(&self.st);
-        if let Some(c) = st.conns.get_mut(&conn) {
+        // only a phone that is in says which page it shows
+        if let Some(c) = st.conns.get_mut(&conn).filter(|c| c.device.is_some()) {
             if c.page != page {
                 c.page = page.chars().take(80).collect();
                 drop(st);
@@ -456,42 +606,61 @@ impl Hub {
 
     pub(crate) fn pair(&self, conn: u64, code: &str, name: &str, model: &str, tablet: bool) -> PairResult {
         let mut st = lock(&self.st);
-        if st.locked_until.is_some_and(|t| t > Instant::now()) {
+        let Some(peer) = st.conns.get(&conn).map(|c| c.peer) else { return PairResult::Refused("That didn't work. Try again.".into()) };
+        let now = Instant::now();
+        // wrong codes are counted for each address: someone else guessing never locks this phone out
+        if st.guesses.get(&peer).is_some_and(|g| g.locked_until.is_some_and(|t| t > now)) {
             return PairResult::Refused("Too many wrong codes. Wait a minute and try again.".into());
         }
         let fresh = st.code.made.elapsed() <= CODE_LIFE;
         // compared in full whatever the first wrong digit is
         let right = fresh && code.len() == st.code.code.len() && code.bytes().zip(st.code.code.bytes()).fold(0u8, |a, (x, y)| a | (x ^ y)) == 0;
         if !right {
-            st.wrong += 1;
-            if st.wrong >= MAX_WRONG {
-                st.wrong = 0;
-                st.locked_until = Some(Instant::now() + LOCKOUT);
+            if st.guesses.len() > 256 {
+                st.guesses.retain(|_, g| g.locked_until.is_some_and(|t| t > now));
+            }
+            let g = st.guesses.entry(peer).or_default();
+            g.wrong += 1;
+            if g.wrong >= MAX_WRONG {
+                g.wrong = 0;
+                g.locked_until = Some(now + LOCKOUT);
+            }
+            // guesses from many addresses never add up against one code: it is replaced
+            st.wrong_total += 1;
+            let renewed = fresh && st.wrong_total >= MAX_WRONG_TOTAL;
+            if renewed {
+                st.renew_code();
+            }
+            drop(st);
+            if renewed {
+                self.emit(PhoneEvent::Changed);
             }
             return PairResult::Refused(if fresh { "That code isn't right. Look at the code on the PC.".into() } else { "That code ran out. Look at the new one on the PC.".into() });
         }
-        st.wrong = 0;
+        st.guesses.remove(&peer);
         let name: String = name.chars().filter(|c| !c.is_control()).take(30).collect::<String>().trim().to_string();
         let name = if name.is_empty() { "Phone".to_string() } else { name };
         let model: String = model.chars().filter(|c| !c.is_control()).take(40).collect();
         if !self.require_match.load(Ordering::Relaxed) {
-            drop(st);
             // the code is enough
-            let mut st = lock(&self.st);
             let (tok, id) = (token(), format!("ph{}-{}", now_ms(), self.next_id.fetch_add(1, Ordering::Relaxed)));
             st.devices.push(Device { id: id.clone(), name: name.clone(), model, tablet, token_hash: sha256_hex(tok.as_bytes()), added_ms: now_ms(), last_seen_ms: now_ms() });
+            let ticket = st.ticket_for(&id);
             if let Some(c) = st.conns.get_mut(&conn) {
                 c.device = Some(id);
             }
-            st.code = new_code();
+            st.renew_code();
             self.save(&st);
             drop(st);
             self.emit(PhoneEvent::Changed);
-            return PairResult::Approved { token: tok, name };
+            return PairResult::Approved { token: tok, name, ticket };
+        }
+        st.pending.retain(|p| p.conn != conn && p.since.elapsed() <= PAIR_WAIT);
+        if st.pending.len() >= MAX_PENDING {
+            return PairResult::Refused("Too many phones are waiting to be allowed. Try again in a moment.".into());
         }
         let number = random_number(100, 999).to_string();
-        st.pending.retain(|p| p.conn != conn);
-        st.pending.push(Pending { conn, name, model, tablet, number: number.clone() });
+        st.pending.push(Pending { conn, name, model, tablet, number: number.clone(), since: now });
         drop(st);
         self.emit(PhoneEvent::Changed);
         PairResult::Waiting(number)

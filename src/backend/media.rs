@@ -273,12 +273,34 @@ pub fn import(media_dir: &Path, path: &Path, kind: Kind) -> Result<Value, String
     import_bytes(media_dir, &bytes, &name, kind)
 }
 
-/// The same, for a picture or GIF that arrived as bytes (the website's Sync), called `name`.
-pub fn import_bytes(media_dir: &Path, bytes: &[u8], name: &str, kind: Kind) -> Result<Value, String> {
+/// The biggest picture side decoded, and the most memory one decode may take: a small file that
+/// claims to be 60000 × 60000 pixels is refused before it fills memory.
+pub const MAX_SIDE: u32 = 8192;
+const MAX_DECODE_BYTES: u64 = 300 * 1024 * 1024;
+
+fn limited_reader(bytes: &[u8]) -> Result<image::ImageReader<std::io::Cursor<&[u8]>>, String> {
+    let mut r = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().map_err(|_| "That picture couldn't be read.".to_string())?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_SIDE);
+    limits.max_image_height = Some(MAX_SIDE);
+    limits.max_alloc = Some(MAX_DECODE_BYTES);
+    r.limits(limits);
+    Ok(r)
+}
+
+/// Decodes a picture from a file someone else made (an import, a profile, the website), with
+/// limits on its size. Use this, not image::load_from_memory, for anything not made by the app.
+pub fn decode_limited(bytes: &[u8]) -> Result<image::DynamicImage, String> {
+    limited_reader(bytes)?.decode().map_err(|_| format!("That picture is damaged, or bigger than {MAX_SIDE} × {MAX_SIDE}, and couldn't be opened."))
+}
+
+/// Checks a picture or GIF before it is kept: 25 MB at most, a PNG, JPEG, GIF or WebP (a GIF for
+/// a GIF), and one that opens within the size limits. Returns its ending and size in pixels.
+pub fn check(bytes: &[u8], kind: Kind) -> Result<(&'static str, u32, u32), String> {
     if bytes.len() as u64 > MAX_MEDIA_BYTES {
         return Err("That file is larger than 25 MB.".into());
     }
-    let ext = match image::guess_format(&bytes) {
+    let ext = match image::guess_format(bytes) {
         Ok(image::ImageFormat::Png) => "png",
         Ok(image::ImageFormat::Jpeg) => "jpg",
         Ok(image::ImageFormat::Gif) => "gif",
@@ -289,7 +311,65 @@ pub fn import_bytes(media_dir: &Path, bytes: &[u8], name: &str, kind: Kind) -> R
         return Err("That isn't a GIF file. Make one on the website with Download GIF.".into());
     }
     // it must open, so nothing is kept that can't be drawn
-    let (w, h) = image::load_from_memory(bytes).map(|i| (i.width(), i.height())).map_err(|_| "That picture is damaged and couldn't be opened.".to_string())?;
+    let img = decode_limited(bytes)?;
+    if img.width() == 0 || img.height() == 0 {
+        return Err("That picture is empty.".into());
+    }
+    Ok((ext, img.width(), img.height()))
+}
+
+/// Media files nothing uses any more: a picture or GIF (or a picture's design) whose name no
+/// profile, page, button, look, design or GIF list in `doc` mentions. Ones newer than a day are
+/// kept whatever, since a window (Choose pages, an update offer) may be about to use them.
+/// Returns how many were removed.
+pub fn collect_garbage(media_dir: &Path, doc: &Value) -> usize {
+    collect_garbage_older_than(media_dir, doc, std::time::Duration::from_secs(24 * 3600))
+}
+
+pub(crate) fn collect_garbage_older_than(media_dir: &Path, doc: &Value, keep_new: std::time::Duration) -> usize {
+    fn words(v: &Value, out: &mut std::collections::HashSet<String>) {
+        match v {
+            Value::String(s) => {
+                out.insert(s.clone());
+            }
+            Value::Array(a) => a.iter().for_each(|x| words(x, out)),
+            Value::Object(m) => m.values().for_each(|x| words(x, out)),
+            _ => {}
+        }
+    }
+    let mut used = std::collections::HashSet::new();
+    words(doc, &mut used);
+    // an empty or odd library never empties the folder
+    if used.is_empty() {
+        return 0;
+    }
+    let Ok(rd) = fs::read_dir(media_dir) else { return 0 };
+    let mut removed = 0;
+    for e in rd.flatten() {
+        let path = e.path();
+        let file = e.file_name().to_string_lossy().into_owned();
+        if !path.is_file() || file.ends_with(".tmp") {
+            continue;
+        }
+        let name = file.strip_suffix(&format!(".{}", super::vault::MEDIA_EXT)).unwrap_or(&file);
+        let owner = name.strip_suffix(".design.json").unwrap_or(name);
+        if safe_name(owner).is_none() || used.contains(owner) {
+            continue;
+        }
+        let young = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_none_or(|age| age < keep_new);
+        if young {
+            continue;
+        }
+        if fs::remove_file(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
+/// The same, for a picture or GIF that arrived as bytes (the website's Sync), called `name`.
+pub fn import_bytes(media_dir: &Path, bytes: &[u8], name: &str, kind: Kind) -> Result<Value, String> {
+    let (ext, w, h) = check(bytes, kind)?;
     let name: String = name.chars().take(24).collect();
     let id = match kind {
         Kind::Picture => format!("u:{}", base36(now_ms())),
@@ -315,6 +395,14 @@ fn base36(mut t: u64) -> String {
     s
 }
 
+
+/// A real 2 x 2 PNG, for tests that need a picture that opens.
+#[cfg(test)]
+pub fn tiny_png() -> Vec<u8> {
+    let mut out = std::io::Cursor::new(Vec::new());
+    image::RgbaImage::from_pixel(2, 2, image::Rgba([1, 2, 3, 255])).write_to(&mut out, image::ImageFormat::Png).unwrap();
+    out.into_inner()
+}
 
 /// Tests that fill the shared lists take turns.
 #[cfg(test)]
@@ -370,6 +458,42 @@ mod tests {
             _ => panic!("a drawn GIF"),
         }
         assert!(matches!(gif(g["id"].as_str().unwrap()).unwrap().src, Some(GifSource::File(_))));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // pictures from elsewhere are checked before they are kept, and huge ones aren't decoded
+    #[test]
+    fn pictures_from_files_are_checked_and_size_limited() {
+        assert!(check(&png_bytes(4, 2), Kind::Picture).is_ok());
+        assert!(check(&png_bytes(4, 2), Kind::Gif).unwrap_err().contains("GIF"));
+        assert!(check(b"not a picture", Kind::Picture).is_err());
+        assert!(check(&vec![0u8; (MAX_MEDIA_BYTES + 1) as usize], Kind::Picture).unwrap_err().contains("25 MB"));
+        // a PNG whose header claims 100000 x 100000 pixels: refused before memory is taken
+        let mut huge = png_bytes(1, 1);
+        huge[16..20].copy_from_slice(&100_000u32.to_be_bytes());
+        huge[20..24].copy_from_slice(&100_000u32.to_be_bytes());
+        assert!(decode_limited(&huge).is_err());
+        let _ = huge;
+    }
+
+    // what no profile uses goes; anything used, a picture's design, or a new file stays
+    #[test]
+    fn only_unused_old_media_is_removed() {
+        let dir = std::env::temp_dir().join(format!("md-media-gc-{}", now_ms()));
+        for n in ["used.png", "used.png.design.json", "gone.png", "gone.png.design.json", "gif-1.gif"] {
+            store(&dir, n, b"x").unwrap();
+        }
+        fs::write(dir.join("half.png.mdmedia.tmp"), b"x").unwrap();
+        let doc = json!({ "images": [{ "id": "u:1", "media": "used.png" }], "designs": [{ "faces": { "1x1": { "layers": [{ "gif": "gif-1.gif" }] } } }] });
+        // new files are kept whatever
+        assert_eq!(collect_garbage(&dir, &doc), 0);
+        assert_eq!(collect_garbage_older_than(&dir, &doc, std::time::Duration::ZERO), 2);
+        let left: Vec<String> = fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        assert!(left.iter().any(|n| n == "used.png.mdmedia") && left.iter().any(|n| n == "used.png.design.json.mdmedia") && left.iter().any(|n| n == "gif-1.gif.mdmedia"), "{left:?}");
+        assert!(!left.iter().any(|n| n.starts_with("gone.png")), "{left:?}");
+        assert!(left.iter().any(|n| n.ends_with(".tmp")), "a write in progress is left alone");
+        // an empty library removes nothing
+        assert_eq!(collect_garbage_older_than(&dir, &json!({}), std::time::Duration::ZERO), 0);
         let _ = fs::remove_dir_all(&dir);
     }
 

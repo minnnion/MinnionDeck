@@ -293,7 +293,7 @@ pub fn download(root: &Path, progress: impl Fn(u64, u64)) -> Result<String, Stri
         if hex != sha {
             return Err("The download doesn't match GitHub's checksum, so it wasn't kept.".into());
         }
-        super::signing::verify_release(&sig, &a.name, &hex)?;
+        super::signing::verify_release(&sig, &a.name, &hex, &r.tag_name, current_version())?;
         out.flush().map_err(|e| e.to_string())
     })();
     if let Err(e) = result {
@@ -431,7 +431,8 @@ mod tests {
         let a = installer(&r, &src).expect("an installer in the release");
         let sha = digest(a).expect("GitHub's checksum for it");
         let sig = fetch_signature(&r, &src, &a.name).expect("its .sig beside it");
-        let author = crate::backend::signing::verify_release(&sig, &a.name, &sha).expect("a signature the app accepts");
+        // as the build before the release checks it: newer than 0.0.0, signed as the tag's version
+        let author = crate::backend::signing::verify_release(&sig, &a.name, &sha, &r.tag_name, "0.0.0").expect("a signature the app accepts");
         println!("{} {} is signed by {author}", r.tag_name, a.name);
     }
 }

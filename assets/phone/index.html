@@ -117,6 +117,9 @@ html, body { margin: 0; height: 100%; background: var(--ground); color: var(--te
   var isIOS = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
   var token = ""; try { token = localStorage.getItem(KEY) || ""; } catch (e) {}
   var ws = null, retry = 0, deck = null, cur = "", lastPcPage = "", dismissedFs = false, wake = null;
+  // ticket: opens this page's pictures for a while (the PC hands it over once the phone is in; the
+  // phone's own key never goes in an address). wantPair: Pair was pressed while not connected.
+  var ticket = "", wantPair = false;
   var tiles = {}, back = [], ping = null, paired = false, emptyCells = [];
 
   function standalone() { return (window.matchMedia && matchMedia("(display-mode: standalone), (display-mode: fullscreen)").matches) || navigator.standalone === true; }
@@ -138,14 +141,24 @@ html, body { margin: 0; height: 100%; background: var(--ground); color: var(--te
   function connect() {
     var proto = location.protocol === "https:" ? "wss://" : "ws://";
     ws = new WebSocket(proto + location.host + "/ws");
+    var opened = false;
     ws.onopen = function () {
-      retry = 0; show("lost", false);
-      if (token) send({ t: "hello", token: token }); else needPair();
+      opened = true; retry = 0; show("lost", false);
+      if (token) send({ t: "hello", token: token });
+      else { var again = wantPair; wantPair = false; if (!needPair() && again) doPair(); }
       clearInterval(ping); ping = setInterval(function () { send({ t: "ping" }); }, 15000);
     };
     ws.onmessage = function (e) { var m; try { m = JSON.parse(e.data); } catch (x) { return; } onMsg(m); };
     ws.onclose = function () {
       clearInterval(ping); if (paired) show("lost", true);
+      // a phone that isn't paired yet doesn't keep a connection open (the PC closes idle ones):
+      // it connects again when Pair is pressed
+      if (!token && !paired) {
+        ws = null; $("pair-ask").hidden = false; $("pair-wait").hidden = true;
+        if (wantPair && !opened) { wantPair = false; $("pairerr").textContent = "Couldn't reach the PC. Is it on, and on this Wi-Fi?"; }
+        else if (wantPair) connect();
+        return;
+      }
       setTimeout(connect, Math.min(4000, 800 + retry++ * 600));
     };
     ws.onerror = function () { try { ws.close(); } catch (x) {} };
@@ -153,21 +166,24 @@ html, body { margin: 0; height: 100%; background: var(--ground); color: var(--te
   function needPair() {
     paired = false; show("pair", true); $("ios-pair").hidden = !(isIOS && !standalone());
     var h = (location.hash || "").replace("#", "");
-    if (/^\d{6}$/.test(h)) { $("code").value = h; history.replaceState(null, "", location.pathname); doPair(); }
+    if (/^\d{6}$/.test(h)) { $("code").value = h; history.replaceState(null, "", location.pathname); doPair(); return true; }
+    return false;
   }
   function doPair() {
     var c = $("code").value.replace(/\D/g, ""); if (c.length !== 6) { $("pairerr").textContent = "Type the 6 digits from your PC."; return; }
     $("pairerr").textContent = "";
+    if (!ws || ws.readyState !== 1) { wantPair = true; if (!ws || ws.readyState > 1) connect(); return; }
     send({ t: "pair", code: c, name: deviceName(), model: ua.slice(0, 40), tablet: isTablet() });
   }
   function onMsg(m) {
     switch (m.t) {
-      case "hello": paired = true; show("pair", false); maybeFs(); break;
-      case "unpaired": case "forgotten": token = ""; try { localStorage.removeItem(KEY); } catch (x) {} paired = false; deck = null; clearTiles(); $("pair-ask").hidden = false; $("pair-wait").hidden = true; needPair(); break;
+      case "hello": ticket = m.ticket || ""; paired = true; show("pair", false); maybeFs(); break;
+      case "ticket": if (m.ticket) { ticket = m.ticket; render(); } break;
+      case "unpaired": case "forgotten": token = ""; ticket = ""; try { localStorage.removeItem(KEY); } catch (x) {} paired = false; deck = null; clearTiles(); $("pair-ask").hidden = false; $("pair-wait").hidden = true; needPair(); break;
       case "waiting": $("pair-ask").hidden = true; $("pair-wait").hidden = false; $("num").textContent = m.number; break;
-      case "paired": token = m.token; try { localStorage.setItem(KEY, token); } catch (x) {} paired = true; show("pair", false); $("pair-ask").hidden = false; $("pair-wait").hidden = true; maybeFs(); break;
+      case "paired": token = m.token; ticket = m.ticket || ""; try { localStorage.setItem(KEY, token); } catch (x) {} paired = true; show("pair", false); $("pair-ask").hidden = false; $("pair-wait").hidden = true; maybeFs(); break;
       case "denied": $("pair-ask").hidden = false; $("pair-wait").hidden = true; $("pairerr").textContent = "The PC said no."; break;
-      case "refused": $("pairerr").textContent = m.message || "That didn't work."; break;
+      case "refused": $("pair-ask").hidden = false; $("pair-wait").hidden = true; $("pairerr").textContent = m.message || "That didn't work."; break;
       case "snap": paired = true; show("pair", false); show("lost", false); onDeck(m.deck); break;
       case "result": if (!m.ok) toast(m.message || "That didn't work.", true); else if (m.message && m.show) toast(m.message); break;
     }
@@ -189,7 +205,7 @@ html, body { margin: 0; height: 100%; background: var(--ground); color: var(--te
     render();
     send({ t: "page", page: cur });
   }
-  function clearTiles() { $("grid").innerHTML = ""; tiles = {}; }
+  function clearTiles() { var g = $("grid"); while (g.firstChild) g.removeChild(g.firstChild); tiles = {}; emptyCells = []; }
   // The buttons are always square and as big as the screen allows. Held upright, the grid turns on
   // its side (5 wide by 3 high shows 3 wide by 5 high), as the preview on the PC does.
   function layout(cols, rows) {
@@ -204,7 +220,7 @@ html, body { margin: 0; height: 100%; background: var(--ground); color: var(--te
     var g = $("grid"); g.style.width = gw + "px"; g.style.height = gh + "px"; g.style.left = Math.round((W - gw) / 2) + "px"; g.style.top = Math.round((H - gh) / 2) + "px";
     return { cell: cell, gap: gap };
   }
-  function url(path, id, extra) { return path + "?id=" + encodeURIComponent(id) + (extra || "") + "&t=" + encodeURIComponent(token); }
+  function url(path, id, extra) { return path + "?id=" + encodeURIComponent(id) + (extra || "") + "&k=" + encodeURIComponent(ticket); }
   function render() {
     if (!deck) return;
     var p = pageById(cur); var ps = pages();
@@ -230,7 +246,7 @@ html, body { margin: 0; height: 100%; background: var(--ground); color: var(--te
       for (var yy = a.y; yy < a.y + a.h; yy++) for (var xx = a.x; xx < a.x + a.w; xx++) used[xx + "," + yy] = true;
       var w = a.w * L.cell + (a.w - 1) * L.gap, h = a.h * L.cell + (a.h - 1) * L.gap;
       el.style.left = a.x * (L.cell + L.gap) + "px"; el.style.top = a.y * (L.cell + L.gap) + "px"; el.style.width = w + "px"; el.style.height = h + "px";
-      var key = JSON.stringify([t.colour, t.ink, t.icon, t.label, t.pic, t.contain, t.gif, t.gifIcon, w, h, names, deck.settings && deck.settings.dark]);
+      var key = JSON.stringify([t.colour, t.ink, t.icon, t.label, t.pic, t.contain, t.gif, t.gifIcon, w, h, names, deck.settings && deck.settings.dark, ticket]);
       if (el._k !== key) { el._k = key; face(el, t, w, h, names); }
     });
     Object.keys(tiles).forEach(function (id) { if (!keep[id]) { tiles[id].remove(); delete tiles[id]; } });
@@ -242,18 +258,25 @@ html, body { margin: 0; height: 100%; background: var(--ground); color: var(--te
       $("grid").insertBefore(e, $("grid").firstChild); emptyCells.push(e);
     }
   }
+  // A button's face, built piece by piece: nothing from the deck (names, picture ids, colours) is
+  // ever put into the page as HTML.
   function face(el, t, w, h, names) {
     var m = Math.min(w, h), media = !!(t.pic || (t.gif && !t.gifIcon));
     el.style.background = t.colour; el.style.borderColor = deck.theme.ink; el.style.color = t.ink;
-    var html = "";
-    if (t.pic) html += '<div class="pic" style="background-image:url(' + url("/media", t.pic).replace(/'/g, "%27") + ');background-size:' + (t.contain ? "contain" : "cover") + '"></div>';
-    if (t.gif && !t.gifIcon) html += '<div class="gifbg" style="background-image:url(' + url("/gif", t.gif).replace(/'/g, "%27") + ')"></div>';
+    while (el.firstChild) el.removeChild(el.firstChild);
+    function add(tag, cls) { var n = document.createElement(tag); n.className = cls; el.appendChild(n); return n; }
+    function bg(n, u) { n.style.backgroundImage = 'url("' + u + '")'; }
+    if (t.pic) { var p = add("div", "pic"); bg(p, url("/media", t.pic)); p.style.backgroundSize = t.contain ? "contain" : "cover"; }
+    if (t.gif && !t.gifIcon) bg(add("div", "gifbg"), url("/gif", t.gif));
     var hasLabel = names && t.label, size = Math.floor(m * (hasLabel ? 0.4 : 0.48)), cy = hasLabel ? "46%" : "50%";
-    if (t.gif && t.gifIcon) html += '<img class="ico" alt="" draggable="false" style="top:' + cy + ';height:' + size + 'px" src="' + url("/gif", t.gif) + '">';
-    else if (t.icon) html += '<img class="ico" alt="" draggable="false" style="top:' + cy + ';width:' + size + 'px;height:' + size + 'px" src="' + url("/icon", t.icon, "&c=" + encodeURIComponent((t.ink || "#000000").replace("#", ""))) + '">';
-    if (hasLabel) html += '<div class="lbl' + (media ? " back" : "") + '" style="font-size:' + Math.max(10, Math.min(14, m * 0.085)) + 'px"></div>';
-    el.innerHTML = html;
-    var l = el.querySelector(".lbl"); if (l) l.textContent = t.label;
+    var gifIcon = t.gif && t.gifIcon;
+    var src = gifIcon ? url("/gif", t.gif) : t.icon ? url("/icon", t.icon, "&c=" + encodeURIComponent((t.ink || "#000000").replace("#", ""))) : "";
+    if (src) {
+      var i = add("img", "ico"); i.alt = ""; i.draggable = false; i.style.top = cy; i.style.height = size + "px";
+      if (!gifIcon) i.style.width = size + "px";
+      i.src = src;
+    }
+    if (hasLabel) { var l = add("div", "lbl" + (media ? " back" : "")); l.style.fontSize = Math.max(10, Math.min(14, m * 0.085)) + "px"; l.textContent = t.label; }
   }
   function go(id) { if (!pageById(id)) return; back.push(cur); if (back.length > 50) back.shift(); cur = id; render(); send({ t: "page", page: cur }); }
   function bind(el, id) {

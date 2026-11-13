@@ -163,7 +163,7 @@ impl Tile {
     }
 }
 
-#[derive(Clone, Hash)]
+#[derive(Clone, Hash, Default)]
 pub struct Profile {
     /// Its id in library.json ("" for a new one).
     pub id: String,

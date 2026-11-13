@@ -38,8 +38,27 @@ fn main() -> eframe::Result {
         let sent = backend::single::ask_to_quit();
         std::process::exit(if sent { 0 } else { 1 });
     }
+    // The installer's helpers print what they did: a release build has no console of its own
+    if args.iter().any(|a| matches!(a.as_str(), "--install-plugin" | "--add-profile" | "--add-profile-file")) {
+        attach_console();
+    }
+    // When MinnionDeck is running, it does them itself: a helper writing the library or the plugins
+    // behind its back would be saved over by it
+    let hand = |cmd: backend::single::Command| {
+        if backend::single::running_here() {
+            if backend::single::hand(&cmd) {
+                println!("Handed to the MinnionDeck that is running.");
+                std::process::exit(0);
+            }
+            eprintln!("MinnionDeck is running but didn't answer. Close it and try again.");
+            std::process::exit(1);
+        }
+    };
+    let absolute = |p: &str| std::path::absolute(p).unwrap_or_else(|_| std::path::PathBuf::from(p));
+    let picked_arg = || -> Option<Vec<String>> { args.iter().position(|a| a == "--choose").and_then(|i| args.get(i + 1)).map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()) };
     if let Some(i) = args.iter().position(|a| a == "--install-plugin") {
         let Some(file) = args.get(i + 1) else { eprintln!("Name the .mdplugin file."); std::process::exit(2) };
+        hand(backend::single::Command::InstallPlugin(absolute(file)));
         let root = backend::paths::Paths::find().root;
         match backend::plugins::install_file(&root, std::path::Path::new(file)) {
             Ok((m, _, trust)) => {
@@ -74,9 +93,10 @@ fn main() -> eframe::Result {
         }
     }
     if let Some(i) = args.iter().position(|a| a == "--sign-release") {
-        let Some(file) = args.get(i + 1) else { eprintln!("Name the installer: --sign-release <installer.exe>"); std::process::exit(2) };
+        let Some(file) = args.get(i + 1) else { eprintln!("Name the installer: --sign-release <installer.exe> [--version 1.2.3]"); std::process::exit(2) };
         let root = backend::signing::author_root(&backend::paths::Paths::find().root);
-        match backend::signing::sign_release(&root, std::path::Path::new(file)) {
+        let version = args.iter().position(|a| a == "--version").and_then(|i| args.get(i + 1)).map(|s| s.as_str());
+        match backend::signing::sign_release(&root, std::path::Path::new(file), version) {
             Ok((me, out)) => {
                 println!("Signed by {} (key {}): upload {} with the installer.", me.name, backend::signing::fingerprint(&me.key), out.display());
                 std::process::exit(0);
@@ -89,6 +109,11 @@ fn main() -> eframe::Result {
     }
     if let Some(i) = args.iter().position(|a| a == "--add-profile" || a == "--add-profile-file") {
         let Some(id) = args.get(i + 1) else { eprintln!("Name the plugin."); std::process::exit(2) };
+        if args.iter().any(|a| a == "--add-profile-file") {
+            hand(backend::single::Command::AddProfileFile(absolute(id), picked_arg()));
+        } else {
+            hand(backend::single::Command::AddProfile(id.clone(), picked_arg()));
+        }
         let root = backend::paths::Paths::find().root;
         // --add-profile-file <file.mdprofile> adds a profile file from disk instead
         let r = if args.iter().any(|a| a == "--add-profile-file") {

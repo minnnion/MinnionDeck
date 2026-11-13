@@ -270,21 +270,98 @@ pub fn open_path(path: &std::path::Path) -> Result<(), String> {
     win::open(&path.display().to_string(), "")
 }
 
-/// Whether any step can act on the PC by itself (press keys, type, open programs or websites,
-/// change sound...). Plugin steps only send an event to a plugin that was checked when it was
-/// installed, and page, back and wait steps only move around the deck, so those never ask.
-pub fn risky(steps: &[Step]) -> bool {
-    steps.iter().any(|s| !(s.kind.starts_with("plug:") || matches!(s.kind.as_str(), "page" | "back" | "delay" | "")))
+/// Whether a step from an imported profile asks before it first runs. Everything that acts on
+/// the PC does (keys, typing, clicks, programs, websites, sound), and so does a plugin step: its
+/// settings came with the file, and a plugin does with them whatever it was written to do.
+/// The one exception is a step of `own_plugin`, the plugin whose ready-made profile this is (the
+/// user installed that plugin, and its profile comes with it). Page, back and wait steps only
+/// move around the deck.
+pub fn step_asks(s: &Step, own_plugin: Option<&str>) -> bool {
+    match s.kind.as_str() {
+        "page" | "back" | "delay" | "" => false,
+        kind => match kind.strip_prefix("plug:") {
+            Some(rest) => own_plugin.is_none_or(|own| rest.split(':').next() != Some(own)),
+            None => true,
+        },
+    }
+}
+
+/// Whether any of a button's steps asks (see `step_asks`).
+pub fn risky(steps: &[Step], own_plugin: Option<&str>) -> bool {
+    steps.iter().any(|s| step_asks(s, own_plugin))
+}
+
+fn clip(text: &str, max: usize) -> String {
+    let clean: String = text.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    let clean = clean.trim();
+    if clean.chars().count() > max { format!("{}…", clean.chars().take(max).collect::<String>()) } else { clean.to_string() }
+}
+
+/// What a step does, in words, for the "Allow imported buttons?" question.
+pub fn describe(s: &Step) -> String {
+    match s.kind.as_str() {
+        "key" => format!("Press {}", clip(field(s, "keys"), 40)),
+        "text" => format!("Type \"{}\"", clip(field(s, "text"), 50)),
+        "click" => "Click the mouse where the pointer is".into(),
+        "run" => clip(&format!("Open {} {}", field(s, "path"), field(s, "args")), 110),
+        "url" => format!("Open the website {}", clip(field(s, "url"), 90)),
+        "vol" => "Change the volume".into(),
+        "mic" => "Mute or unmute the microphone".into(),
+        kind => match plugins::split_kind(kind) {
+            Some((id, action)) => format!("Use the plugin {id} ({action})"),
+            None => format!("Run \"{}\"", clip(kind, 40)),
+        },
+    }
+}
+
+/// The question's text: what this button does, and what else the profile's buttons do.
+pub fn imported_question(name: &str, this: &[String], others: &[String]) -> String {
+    const SHOWN: usize = 8;
+    let name = clip(name, 40);
+    let list = |lines: &[String]| {
+        let mut out: String = lines.iter().take(SHOWN).map(|l| format!("  •  {l}\n")).collect();
+        if lines.len() > SHOWN {
+            out.push_str(&format!("  •  and {} more\n", lines.len() - SHOWN));
+        }
+        out
+    };
+    let mut text = format!("The buttons in \"{name}\" came from an imported file. Allowing lets every button in this profile run.\n\n");
+    if !this.is_empty() {
+        text.push_str(&format!("This button will:\n{}\n", list(this)));
+    }
+    if !others.is_empty() {
+        text.push_str(&format!("Other buttons in this profile:\n{}\n", list(others)));
+    }
+    text.push_str("Only allow this if you trust where the file came from.");
+    text
+}
+
+/// An OK / Cancel question in a Windows dialog. True for OK.
+pub fn confirm(title: &str, text: &str) -> bool {
+    win::ask(title, text)
 }
 
 /// Buttons from an imported profile can open programs and press keys. The first time one of
-/// them runs, ask in a Windows dialog. True when the user allows it.
-pub fn allow_imported(name: &str) -> bool {
-    let name: String = name.chars().filter(|c| !c.is_control()).take(40).collect();
-    win::ask(
-        "Allow imported buttons?",
-        &format!("The buttons in \"{name}\" came from an imported file. They can open programs and websites, press keys and type on this PC.\n\nOnly allow this if you trust where the file came from."),
-    )
+/// them runs, ask in a Windows dialog that says what they do. True when the user allows it.
+pub fn allow_imported(name: &str, this: &[String], others: &[String]) -> bool {
+    win::ask("Allow imported buttons?", &imported_question(name, this, others))
+}
+
+/// The keys (or mouse buttons) still held after only the first part of a sequence of presses was
+/// sent: each `(what, up)` in the order sent. Returns what to let go, newest first.
+fn still_down<T: PartialEq + Copy>(sent: &[(T, bool)]) -> Vec<T> {
+    let mut down: Vec<T> = vec![];
+    for (what, up) in sent {
+        if *up {
+            if let Some(i) = down.iter().rposition(|d| d == what) {
+                down.remove(i);
+            }
+        } else {
+            down.push(*what);
+        }
+    }
+    down.reverse();
+    down
 }
 
 #[cfg(windows)]
@@ -310,11 +387,57 @@ mod win {
     }
 
     fn send(inputs: &[INPUT]) -> Result<(), String> {
-        let sent = unsafe { SendInput(inputs, size_of::<INPUT>() as i32) };
-        if sent as usize != inputs.len() {
+        let sent = unsafe { SendInput(inputs, size_of::<INPUT>() as i32) } as usize;
+        if sent != inputs.len() {
+            // part went: whatever it pressed is let go, so Ctrl or Shift never stays held down
+            release(&inputs[..sent.min(inputs.len())]);
             return Err("Windows blocked the key presses. The window in front may be running as administrator.".into());
         }
         Ok(())
+    }
+
+    /// Lets go of every key and mouse button `sent` pressed and didn't let go of.
+    fn release(sent: &[INPUT]) {
+        // keys by (key, scan code, typed character, extended); mouse buttons by their down flag
+        let mut events = vec![];
+        for i in sent {
+            unsafe {
+                if i.r#type == INPUT_KEYBOARD {
+                    let k = i.Anonymous.ki;
+                    let up = k.dwFlags.contains(KEYEVENTF_KEYUP);
+                    let base = KEYBD_EVENT_FLAGS(k.dwFlags.0 & !KEYEVENTF_KEYUP.0);
+                    events.push(((0u8, k.wVk.0, k.wScan, base.0), up));
+                } else if i.r#type == INPUT_MOUSE {
+                    let f = i.Anonymous.mi.dwFlags;
+                    for (down, upf, n) in [(MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, 1u16), (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, 2), (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, 3)] {
+                        if f.contains(down) {
+                            events.push(((1u8, n, 0, 0), false));
+                        }
+                        if f.contains(upf) {
+                            events.push(((1u8, n, 0, 0), true));
+                        }
+                    }
+                }
+            }
+        }
+        let ups: Vec<INPUT> = super::still_down(&events)
+            .into_iter()
+            .map(|(kind, a, scan, flags)| {
+                if kind == 0 {
+                    key_input(a, scan, KEYBD_EVENT_FLAGS(flags) | KEYEVENTF_KEYUP)
+                } else {
+                    let f = match a {
+                        2 => MOUSEEVENTF_RIGHTUP,
+                        3 => MOUSEEVENTF_MIDDLEUP,
+                        _ => MOUSEEVENTF_LEFTUP,
+                    };
+                    INPUT { r#type: INPUT_MOUSE, Anonymous: INPUT_0 { mi: MOUSEINPUT { dx: 0, dy: 0, mouseData: 0, dwFlags: f, time: 0, dwExtraInfo: 0 } } }
+                }
+            })
+            .collect();
+        if !ups.is_empty() {
+            unsafe { SendInput(&ups, size_of::<INPUT>() as i32) };
+        }
     }
 
     fn flags(key: &Key, up: bool) -> KEYBD_EVENT_FLAGS {
@@ -461,6 +584,17 @@ mod tests {
         assert!(parse_keys("Hyper+K").unwrap_err().contains("Hyper"));
     }
 
+    // Ctrl+Shift+E sent only as far as "Ctrl down, Shift down, E down": all three are let go
+    #[test]
+    fn a_half_sent_press_lets_go_of_what_it_pressed() {
+        assert_eq!(still_down(&[(CTRL, false), (SHIFT, false), (0x45, false)]), vec![0x45, SHIFT, CTRL]);
+        assert_eq!(still_down(&[(CTRL, false), (SHIFT, false), (0x45, false), (0x45, true), (SHIFT, true)]), vec![CTRL]);
+        assert!(still_down(&[(CTRL, false), (CTRL, true)]).is_empty());
+        assert!(still_down::<u16>(&[]).is_empty());
+        // the same key twice (volume up pressed 5 times) is let go once for each time it is down
+        assert_eq!(still_down(&[(0xAF, false), (0xAF, true), (0xAF, false)]), vec![0xAF]);
+    }
+
     #[test]
     fn volume_moves_in_two_percent_steps() {
         assert_eq!(volume_presses("10"), 5);
@@ -473,6 +607,45 @@ mod tests {
         assert!(check_url("https://example.com").is_ok());
         assert!(check_url("file:///C:/Windows").is_err());
         assert!(check_url("javascript:alert(1)").is_err());
+    }
+
+    fn st(kind: &str, f: serde_json::Value) -> Step {
+        Step { kind: kind.into(), fields: f }
+    }
+
+    #[test]
+    fn imported_steps_that_act_ask_and_only_the_profiles_own_plugin_does_not() {
+        let none = serde_json::json!({});
+        for quiet in ["page", "back", "delay", ""] {
+            assert!(!step_asks(&st(quiet, none.clone()), None), "{quiet}");
+        }
+        for acts in ["key", "text", "click", "run", "url", "vol", "mic", "something-new"] {
+            assert!(step_asks(&st(acts, none.clone()), Some("minnion_obs")), "{acts}");
+        }
+        // a plugin step asks, unless the profile is that plugin's own ready-made one
+        let plug = st("plug:minnion_obs:scene", none.clone());
+        assert!(step_asks(&plug, None));
+        assert!(step_asks(&plug, Some("minnion_spotify")));
+        assert!(!step_asks(&plug, Some("minnion_obs")));
+        assert!(step_asks(&st("plug:minnion_obs_evil:scene", none.clone()), Some("minnion_obs")));
+        assert!(risky(&[st("page", none.clone()), plug.clone()], None));
+        assert!(!risky(&[st("page", none), plug], Some("minnion_obs")));
+    }
+
+    #[test]
+    fn the_question_says_what_the_buttons_do() {
+        let run = st("run", serde_json::json!({ "path": "cmd.exe", "args": "/c  calc\r\n" }));
+        assert_eq!(describe(&run), "Open cmd.exe /c  calc");
+        assert_eq!(describe(&st("key", serde_json::json!({ "keys": "Ctrl+Shift+E" }))), "Press Ctrl+Shift+E");
+        assert_eq!(describe(&st("url", serde_json::json!({ "url": "https://example.com" }))), "Open the website https://example.com");
+        assert_eq!(describe(&st("plug:minnion_obs:scene", serde_json::json!({}))), "Use the plugin minnion_obs (scene)");
+        assert!(describe(&st("text", serde_json::json!({ "text": "x".repeat(200) }))).chars().count() < 70);
+        let others: Vec<String> = (0..12).map(|i| format!("Open app{i}.exe")).collect();
+        let q = imported_question("Stream\u{7}", &[describe(&run)], &others);
+        assert!(q.contains("\"Stream\""), "{q}");
+        assert!(q.contains("This button will:\n  •  Open cmd.exe /c  calc\n"), "{q}");
+        assert!(q.contains("Open app7.exe") && !q.contains("Open app8.exe") && q.contains("and 4 more"), "{q}");
+        assert!(q.ends_with("Only allow this if you trust where the file came from."));
     }
 
     #[test]

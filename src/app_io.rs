@@ -7,12 +7,18 @@ use serde_json::Value;
 use crate::app::{App, View};
 use crate::backend::{dialogs, profile_io};
 
+/// A profile the installer handed over: the profile, the plugin it follows (id, name, file
+/// SHA-256) when it is a plugin's, and the pages picked.
+pub type Handed = (Value, Option<(String, String, String)>, Option<Vec<String>>);
+
 pub enum IoMsg {
     /// A profile file was opened and unpacked (its pictures are already in the media folder)
     Imported(Result<Value, String>),
     Exported(Result<String, String>),
     ExportedAll(Result<(String, usize), String>),
     BackedUp(Result<Option<String>, String>),
+    /// A password backup was saved (where), or not (None: the save dialog was cancelled)
+    PortableSaved(Result<Option<String>, String>),
     Restored(Result<(), String>),
     /// The marketplace's list was read again: how many plugins (`by hand`: say so)
     MarketRefreshed(Result<usize, String>, bool),
@@ -23,6 +29,11 @@ pub enum IoMsg {
     /// A plugin was installed for the first time (or again after being removed): if its profile
     /// has choices, ask which pages to add
     PluginProfileOffer { plugin: String, result: Result<(Value, String), String> },
+    /// The installer's profile command, done by this running copy: the profile, the plugin it
+    /// follows (id, name, file SHA-256) when it is a plugin's, and the pages picked
+    HandedProfile(Result<Handed, String>),
+    /// An author's key file was read: the question to ask before it is trusted
+    AuthorRead(Result<crate::backend::plugins::AuthorInfo, String>),
     /// An author's key was trusted: their name
     AuthorAdded(Result<String, String>),
     /// Plugin `plugin`'s ready-made profile was downloaded: the profile, its file's SHA-256 and
@@ -292,6 +303,38 @@ impl App {
         });
     }
 
+    /// Save a password backup: asks where, then seals the library and pictures with `password`.
+    pub fn start_portable_export(&mut self, password: String) {
+        let (tx, paths, ctx) = (self.io.tx.clone(), self.lib.paths.clone(), self.egui.clone());
+        std::thread::spawn(move || {
+            let name = format!("MinnionDeck backup {}.{}", crate::backend::backups::stamp(crate::backend::util::now_ms()), crate::backend::backups::PORTABLE_EXT);
+            let r = match dialogs::save_file("Save a password backup", "MinnionDeck password backup", crate::backend::backups::PORTABLE_EXT, &name) {
+                Some(file) => crate::backend::backups::export_portable(&paths, &file, &password).map(|_| Some(file.display().to_string())),
+                None => Ok(None),
+            };
+            let _ = tx.send(IoMsg::PortableSaved(r));
+            ctx.request_repaint();
+        });
+    }
+
+    /// Restore a password backup: asks which file, then opens it with `password`. What is here
+    /// now is backed up first.
+    pub fn start_portable_import(&mut self, password: String) {
+        let (tx, paths, ctx) = (self.io.tx.clone(), self.lib.paths.clone(), self.egui.clone());
+        std::thread::spawn(move || {
+            let r = match dialogs::open_file("Restore a password backup", "MinnionDeck password backup", crate::backend::backups::PORTABLE_EXT) {
+                Some(file) => crate::backend::backups::import_portable(&paths, &file, &password).map(|_| Some(String::new())),
+                None => Ok(None),
+            };
+            let _ = tx.send(match r {
+                Ok(Some(_)) => IoMsg::Restored(Ok(())),
+                Ok(None) => IoMsg::PortableSaved(Ok(None)),
+                Err(e) => IoMsg::Restored(Err(e)),
+            });
+            ctx.request_repaint();
+        });
+    }
+
     /// Put a backup back. What is there now is backed up first, so this can be undone.
     pub fn start_restore(&mut self, name: String) {
         let (tx, paths, ctx) = (self.io.tx.clone(), self.lib.paths.clone(), self.egui.clone());
@@ -372,8 +415,17 @@ impl App {
                 }
                 IoMsg::BackedUp(Ok(None)) => self.say("Nothing to back up yet", now),
                 IoMsg::BackedUp(Err(e)) => self.say(&format!("Could not back up: {e}"), now),
+                IoMsg::PortableSaved(r) => {
+                    self.portable = None;
+                    match r {
+                        Ok(Some(path)) => self.say(&format!("Password backup saved to {path}"), now),
+                        Ok(None) => {}
+                        Err(e) => self.say(&format!("Could not save the password backup: {e}"), now),
+                    }
+                }
                 // the library was put back on disk: read it again, so every page starts from it
                 IoMsg::Restored(Ok(())) => {
+                    self.portable = None;
                     let (lib, sample, _) = crate::backend::library::Library::open();
                     self.lib = lib;
                     self.sample = sample;
@@ -384,7 +436,16 @@ impl App {
                     self.refresh_backups(now);
                     self.say("Backup restored. What was here before was backed up first", now);
                 }
-                IoMsg::Restored(Err(e)) => self.say(&format!("Could not restore: {e}"), now),
+                IoMsg::Restored(Err(e)) => {
+                    // a wrong password: the question stays open to try again
+                    match self.portable.as_mut() {
+                        Some(p) => {
+                            p.busy = false;
+                            p.error = Some(e);
+                        }
+                        None => self.say(&format!("Could not restore: {e}"), now),
+                    }
+                }
                 IoMsg::MediaImported(kind, Ok(entry), token, look, icon_inside) => {
                     let name = entry.get("name").and_then(|n| n.as_str()).unwrap_or("It").to_string();
                     let id = self.lib.add_media(kind, entry);
@@ -422,16 +483,44 @@ impl App {
                     self.choose_pages = Some(crate::views::choose_pages::ChoosePages::new(bundle, Some((plugin, sha))));
                 }
                 IoMsg::PluginProfileOffer { .. } => {}
-                IoMsg::AuthorAdded(Ok(name)) => self.say(&format!("{name} is trusted now. Their plugins can run."), now),
-                IoMsg::AuthorAdded(Err(e)) => self.say(&format!("Could not add that author: {e}"), now),
+                IoMsg::HandedProfile(Ok((bundle, plugin, picked))) => {
+                    let r = match &plugin {
+                        Some((id, name, sha)) => self.lib.add_plugin_profile_bundle(&mut self.sample, &bundle, id, name, sha, picked.as_deref()),
+                        None => self.lib.add_profile_bundle(&mut self.sample, &bundle, picked.as_deref()),
+                    };
+                    match r {
+                        Ok(said) => self.say(&said, now),
+                        Err(e) => self.say(&format!("Could not add the profile: {e}"), now),
+                    }
+                }
+                IoMsg::HandedProfile(Err(e)) => self.say(&format!("Could not add the profile: {e}"), now),
+                IoMsg::AuthorRead(Ok(info)) => {
+                    self.author_ask = Some(crate::app_open::AuthorAsk { info, opened: None, closing: None, busy: false });
+                }
+                IoMsg::AuthorRead(Err(e)) => self.say(&format!("Could not open that author key: {e}"), now),
+                IoMsg::AuthorAdded(r) => {
+                    self.author_ask = None;
+                    match r {
+                        Ok(name) => self.say(&format!("{name} is trusted now. Their plugins can run."), now),
+                        Err(e) => self.say(&format!("Could not add that author: {e}"), now),
+                    }
+                }
                 IoMsg::MarketRefreshed(r, by_hand) => {
                     self.market_fetching = false;
                     self.market_checked = now;
                     let ok = r.is_ok();
-                    match r {
-                        Ok(n) if by_hand => self.say(&format!("The Marketplace has {n} {}", if n == 1 { "plugin" } else { "plugins" }), now),
-                        Err(e) if by_hand => self.say(&e, now),
-                        _ => {}
+                    match &r {
+                        Ok(_) => {
+                            self.market_ok_at = Some(now);
+                            self.market_error = None;
+                        }
+                        // the saved list stays on show, and the page says it may be old
+                        Err(e) => self.market_error = Some(e.clone()),
+                    }
+                    // Check now (or a link) is answered with what came back, not before
+                    if std::mem::take(&mut self.market_asked) || by_hand {
+                        let ups = crate::views::marketplace::updates(self).len();
+                        self.say(&crate::views::marketplace::refresh_message(&r, ups), now);
                     }
                     // a plugin's profile may have a new version
                     if ok {

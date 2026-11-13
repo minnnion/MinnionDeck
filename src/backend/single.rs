@@ -36,6 +36,54 @@ pub const MAGIC: usize = 0x4D44_0001;
 /// The word handed to a running copy to ask it to close (the installer and uninstaller use it).
 pub const QUIT: &str = "--quit";
 
+/// What starts a command handed to a running copy (see `Command`). Its lines are split by "\n".
+pub const CMD: &str = "--md-cmd:";
+
+/// The installer's helpers (--install-plugin, --add-profile, --add-profile-file). When the app is
+/// already running they are handed to it, so the running copy does them on its own library and
+/// plugins (a helper writing them behind its back would be saved over by the running copy).
+#[derive(Debug, PartialEq, Clone)]
+pub enum Command {
+    InstallPlugin(std::path::PathBuf),
+    /// A profile file, and the pages picked if it has choices
+    AddProfileFile(std::path::PathBuf, Option<Vec<String>>),
+    /// A plugin's ready-made profile from the marketplace
+    AddProfile(String, Option<Vec<String>>),
+}
+
+impl Command {
+    pub fn encode(&self) -> String {
+        let picked = |p: &Option<Vec<String>>| p.as_ref().map(|p| p.join(",")).unwrap_or_else(|| "-".into());
+        match self {
+            Command::InstallPlugin(f) => format!("{CMD}install-plugin\n{}", f.display()),
+            Command::AddProfileFile(f, p) => format!("{CMD}add-profile-file\n{}\n{}", f.display(), picked(p)),
+            Command::AddProfile(id, p) => format!("{CMD}add-profile\n{id}\n{}", picked(p)),
+        }
+    }
+
+    pub fn decode(text: &str) -> Option<Command> {
+        let mut lines = text.strip_prefix(CMD)?.split('\n');
+        let (what, arg) = (lines.next()?, lines.next().filter(|a| !a.is_empty())?);
+        let picked = lines.next().filter(|p| *p != "-").map(|p| p.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect());
+        match what {
+            "install-plugin" => Some(Command::InstallPlugin(arg.into())),
+            "add-profile-file" => Some(Command::AddProfileFile(arg.into(), picked)),
+            "add-profile" => Some(Command::AddProfile(arg.to_string(), picked)),
+            _ => None,
+        }
+    }
+}
+
+/// Whether a copy using this data folder is running now (without claiming anything).
+pub fn running_here() -> bool {
+    imp::running(&my_title())
+}
+
+/// Hands a command to the copy that is running. True when it was taken.
+pub fn hand(cmd: &Command) -> bool {
+    imp::hand_over(&my_title(), &[cmd.encode()], 4)
+}
+
 /// Tells a running copy to save and close. Returns false when none is running.
 pub fn ask_to_quit() -> bool {
     imp::hand_over(&my_title(), &[QUIT.to_string()], 2)
@@ -96,6 +144,10 @@ mod imp {
         Claim::First
     }
 
+    pub fn running(title: &str) -> bool {
+        find(Some(title)).is_some()
+    }
+
     /// The tray window of the copy with this title (or of any copy, with None).
     fn find(title: Option<&str>) -> Option<HWND> {
         let t = title.map(HSTRING::from);
@@ -136,6 +188,31 @@ mod imp {
     }
     pub fn hand_over(_: &str, _: &[String], _: u32) -> bool {
         false
+    }
+    pub fn running(_: &str) -> bool {
+        false
+    }
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::*;
+
+    #[test]
+    fn commands_go_to_the_running_copy_and_come_back_the_same() {
+        let all = [
+            Command::InstallPlugin(r"C:\Setup\plugins\Timer.mdplugin".into()),
+            Command::AddProfileFile(r"C:\Setup\Streaming.mdprofile".into(), Some(vec!["obs".into(), "twitch".into()])),
+            Command::AddProfileFile(r"C:\x.mdprofile".into(), None),
+            Command::AddProfile("minnion_spotify".into(), None),
+        ];
+        for c in all {
+            assert_eq!(Command::decode(&c.encode()), Some(c));
+        }
+        // other things handed over are not commands
+        assert_eq!(Command::decode(r"C:\Downloads\Timer.mdplugin"), None);
+        assert_eq!(Command::decode("--md-cmd:format-disk\nC:"), None);
+        assert_eq!(Command::decode("--md-cmd:install-plugin\n"), None);
     }
 }
 

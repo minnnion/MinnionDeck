@@ -500,26 +500,24 @@ impl Supervisor {
     fn load_one(&self, id: &str) {
         let folder = self.dir.join(id);
         let cfg = read_config(&self.root);
-        // Turned off, or not allowed to run: make sure it isn't running
-        let gate = if cfg.disabled.iter().any(|d| d == id) {
-            Some(("off", None))
-        } else {
-            may_run(&signing::verify_folder(&folder, &cfg.trusted), &cfg).err().map(|e| ("dizzy", Some(e)))
-        };
-        if let Some((state, error)) = gate {
+        let stop = |state: &'static str, error: Option<String>| {
             let _ = self.request(json!({ "t": "unload", "id": id }), Duration::from_secs(5));
             if let Some(e) = &error {
                 log(&format!("Plugin {id} not started: {e}"));
             }
             self.set_status(id, state, error);
-            return;
+        };
+        // Turned off: make sure it isn't running
+        if cfg.disabled.iter().any(|d| d == id) {
+            return stop("off", None);
         }
+        // The DLL is copied first and the copy is what runs, so it is the copy that is checked
+        // against the signature: a file swapped in the folder after the check can't slip through.
+        let shadow = match prepare_copy(&folder, &self.run, id, &cfg) {
+            Ok(s) => s,
+            Err(e) => return stop("dizzy", Some(e)),
+        };
         let result = (|| -> Result<(), String> {
-            let m = read_manifest(&folder)?;
-            let dll = folder.join(&m.dll);
-            fs::create_dir_all(&self.run).map_err(|e| e.to_string())?;
-            let shadow = self.run.join(format!("{id}-{}.dll", util::now_ms()));
-            fs::copy(&dll, &shadow).map_err(|e| format!("Could not copy {}: {e}", m.dll))?;
             let body = self.request(
                 json!({ "t": "load", "id": id, "dll": shadow.to_string_lossy(), "dir": folder.to_string_lossy(), "settings": self.read_settings(id) }),
                 Duration::from_secs(20),
@@ -725,6 +723,49 @@ pub fn state_of(id: &str) -> Option<(&'static str, Option<String>)> {
     sup().ok()?.state_of(id).map(|s| (s.state, s.error))
 }
 
+/// What a plugin folder's signature check found, kept while none of its files changed (their
+/// names, sizes and times) and the trusted authors are the same. Install, remove and reload clear it.
+static TRUST_CACHE: Mutex<Option<HashMap<PathBuf, (u64, Trust)>>> = Mutex::new(None);
+
+/// A cheap stamp of a folder's files and the trusted keys: what makes a signature check go stale.
+fn folder_stamp(folder: &Path, trusted: &[AuthorKey]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    let mut stack = vec![folder.to_path_buf()];
+    let mut files = vec![];
+    while let Some(dir) = stack.pop() {
+        for e in fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let Ok(m) = e.metadata() else { continue };
+            if m.is_dir() {
+                stack.push(e.path());
+            } else {
+                files.push((e.path(), m.len(), m.modified().ok()));
+            }
+        }
+    }
+    files.sort();
+    files.hash(&mut h);
+    trusted.iter().map(|a| &a.key).collect::<Vec<_>>().hash(&mut h);
+    h.finish()
+}
+
+/// `signing::verify_folder`, from the cache when nothing changed.
+fn cached_trust(folder: &Path, trusted: &[AuthorKey]) -> Trust {
+    let stamp = folder_stamp(folder, trusted);
+    let mut cache = TRUST_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let map = cache.get_or_insert_with(HashMap::new);
+    if let Some((_, t)) = map.get(folder).filter(|(s, _)| *s == stamp) {
+        return t.clone();
+    }
+    let t = signing::verify_folder(folder, trusted);
+    map.insert(folder.to_path_buf(), (stamp, t.clone()));
+    t
+}
+
+fn forget_trust() {
+    *TRUST_CACHE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
 /// Installed plugins, their actions and whether each is running
 pub fn list() -> Vec<PluginInfo> {
     let Ok(sup) = sup() else { return vec![] };
@@ -734,7 +775,7 @@ pub fn list() -> Vec<PluginInfo> {
         .iter()
         .map(|f| {
             let mut info = describe(f);
-            info.signature = signing::verify_folder(f, &cfg.trusted);
+            info.signature = cached_trust(f, &cfg.trusted);
             if info.error.is_none() {
                 match sup.state_of(&info.id) {
                     Some(s) => {
@@ -754,6 +795,7 @@ pub fn list() -> Vec<PluginInfo> {
 /// Load plugins again: one (`id`) or all. Picks up new and rebuilt plugins without a restart.
 /// Blocks; call it from a thread.
 pub fn reload(id: Option<String>) -> Result<(), String> {
+    forget_trust();
     let sup = sup()?.clone();
     lock(&sup.crashes).clear();
     if lock(&sup.host).stdin.is_none() {
@@ -906,6 +948,7 @@ pub fn remove(id: &str) -> Result<(), String> {
     fs::rename(&folder, &gone).map_err(|e| format!("Could not remove it: {e}"))?;
     let _ = fs::remove_dir_all(&gone);
     lock(&sup.status).remove(id);
+    forget_trust();
     let key = id.to_string();
     let _ = change_config(move |c| c.disabled.retain(|d| *d != key));
     log(&format!("Plugin {id} removed"));
@@ -964,12 +1007,23 @@ pub fn data_root() -> Result<PathBuf, String> {
     Ok(sup()?.root.clone())
 }
 
-/// Unpack a .mdplugin into `to`, checking every name stays inside, and return its manifest
-pub(crate) fn unpack(file: &Path, to: &Path) -> Result<Manifest, String> {
+/// The biggest .mdplugin read (the file itself; unpacked it may be up to MAX_INSTALL_BYTES)
+const MAX_PACK_BYTES: u64 = 200 * 1024 * 1024;
+
+/// Reads a .mdplugin whole, once: what is checked is what is installed.
+fn read_pack(file: &Path) -> Result<Vec<u8>, String> {
+    let len = fs::metadata(file).map_err(|e| format!("Could not open {}: {e}", file.display()))?.len();
+    if len > MAX_PACK_BYTES {
+        return Err(format!("{} is bigger than 200 MB.", file.display()));
+    }
+    fs::read(file).map_err(|e| format!("Could not open {}: {e}", file.display()))
+}
+
+/// Unpack a .mdplugin (its bytes) into `to`, checking every name stays inside, and return its manifest
+pub(crate) fn unpack(pack: &[u8], to: &Path) -> Result<Manifest, String> {
     use std::io::Read;
     const MAX_INSTALL_BYTES: u64 = 200 * 1024 * 1024;
-    let f = fs::File::open(file).map_err(|e| format!("Could not open {}: {e}", file.display()))?;
-    let mut zip = zip::ZipArchive::new(f).map_err(|_| format!("{} isn't a .mdplugin file.", file.display()))?;
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(pack)).map_err(|_| "That isn't a .mdplugin file.".to_string())?;
     let mut total = 0u64;
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i).map_err(|e| e.to_string())?;
@@ -1008,6 +1062,12 @@ pub(crate) fn unpack(file: &Path, to: &Path) -> Result<Manifest, String> {
 /// Install a .mdplugin into <root>\plugins\<id>\, replacing an older copy. Damaged or changed
 /// packs are refused; unsigned ones install but only run in Developer mode.
 pub(crate) fn install_file(root: &Path, file: &Path) -> Result<(Manifest, PathBuf, Trust), String> {
+    install_bytes(root, &read_pack(file)?)
+}
+
+/// `install_file` for a pack already read.
+pub(crate) fn install_bytes(root: &Path, file: &[u8]) -> Result<(Manifest, PathBuf, Trust), String> {
+    forget_trust();
     let plugins = root.join("plugins");
     fs::create_dir_all(&plugins).map_err(|e| e.to_string())?;
     let stamp = util::now_ms();
@@ -1046,21 +1106,68 @@ pub struct PackInfo {
     /// Whether it will run once installed (signed by a trusted author, or Developer mode is on)
     pub runs: bool,
     pub why: Option<String>,
+    /// The SHA-256 of the file as it was looked at: Install refuses a file that changed since
+    pub sha: String,
+    /// The fingerprint of the key it is signed with, to compare with the author's own page
+    pub key: Option<String>,
+}
+
+impl PackInfo {
+    /// Installing this would put an older version over a newer one
+    pub fn downgrade(&self) -> bool {
+        self.installed.as_deref().is_some_and(|have| super::updates::is_newer(have, &self.version))
+    }
 }
 
 fn inspect_in(root: &Path, file: &Path) -> Result<PackInfo, String> {
     let temp = root.join("plugins").join(format!(".inspect-{}", util::now_ms()));
     let result = (|| {
-        let m = unpack(file, &temp)?;
+        let bytes = read_pack(file)?;
+        let sha = util::sha256_hex(&bytes);
+        let m = unpack(&bytes, &temp)?;
         let cfg = read_config(root);
         let signature = signing::verify_folder(&temp, &cfg.trusted);
         let actions = fs::read_to_string(temp.join(&m.actions)).ok().and_then(|t| serde_json::from_str::<Vec<Value>>(&t).ok()).map(|a| a.len()).unwrap_or(0);
         let installed = fs::read_to_string(root.join("plugins").join(&m.id).join("manifest.json")).ok().and_then(|t| check_manifest(&t).ok()).map(|o| o.version);
         let why = may_run(&signature, &cfg).err();
-        Ok(PackInfo { id: m.id, name: m.name, version: m.version, actions, runs: why.is_none(), why, signature, installed })
+        let key = signing::signer_key(&temp).map(|k| signing::fingerprint(&k));
+        Ok(PackInfo { id: m.id, name: m.name, version: m.version, actions, runs: why.is_none(), why, signature, installed, sha, key })
     })();
     let _ = fs::remove_dir_all(&temp);
     result
+}
+
+/// Copies plugin `id`'s DLL into `run` and checks the copy: it may run (signed by a trusted author,
+/// or Developer mode), and for a signed plugin the copy and the manifest naming it hash to what the
+/// signature vouches for. Returns the copy, which is what the host loads.
+fn prepare_copy(folder: &Path, run: &Path, id: &str, cfg: &PluginConfig) -> Result<PathBuf, String> {
+    let manifest = fs::read(folder.join("manifest.json")).map_err(|_| "manifest.json is missing.".to_string())?;
+    let m = check_manifest(&String::from_utf8_lossy(&manifest))?;
+    if m.id != id {
+        return Err(format!("The folder must be named \"{}\", like the id in manifest.json.", m.id));
+    }
+    fs::create_dir_all(run).map_err(|e| e.to_string())?;
+    let shadow = run.join(format!("{id}-{}.dll", util::now_ms()));
+    fs::copy(folder.join(&m.dll), &shadow).map_err(|e| format!("Could not copy {}: {e}", m.dll))?;
+    let checked = (|| {
+        let (trust, signed) = signing::verify_folder_hashes(folder, &cfg.trusted);
+        may_run(&trust, cfg)?;
+        if let Some(files) = signed {
+            let copy = fs::read(&shadow).map_err(|e| format!("Could not read the copy of {}: {e}", m.dll))?;
+            let same = |name: &str, bytes: &[u8]| files.get(name).is_some_and(|h| h.eq_ignore_ascii_case(&util::sha256_hex(bytes)));
+            if !same(&m.dll, &copy) || !same("manifest.json", &manifest) {
+                return Err("Its files changed while it was starting. It won't run. Install it again from its author.".to_string());
+            }
+        }
+        Ok(())
+    })();
+    match checked {
+        Ok(()) => Ok(shadow),
+        Err(e) => {
+            let _ = fs::remove_file(&shadow);
+            Err(e)
+        }
+    }
 }
 
 /// Looks inside a .mdplugin without installing it: who made it, whether it will run. Blocks.
@@ -1077,32 +1184,76 @@ pub fn profile_beside(media: &Path, file: &Path, name: &str) -> Option<(Value, S
         if !path.extension().is_some_and(|x| x.eq_ignore_ascii_case("mdprofile")) {
             continue;
         }
-        let Ok(bundle) = super::profile_io::import_from(media, &path) else { continue };
-        let ours = bundle["plugins"].as_array().is_some_and(|p| p.iter().any(|n| n.as_str() == Some(name)));
-        if ours && !super::library::choices_of(&bundle).is_empty() {
-            return Some((bundle, util::sha256_hex(&fs::read(&path).ok()?)));
+        // only looked at: a profile that isn't the one wanted leaves nothing behind
+        let Ok(look) = super::profile_io::inspect_from(&path) else { continue };
+        let ours = look["plugins"].as_array().is_some_and(|p| p.iter().any(|n| n.as_str() == Some(name)));
+        if ours && !super::library::choices_of(&look).is_empty() {
+            let bytes = fs::read(&path).ok()?;
+            let bundle = super::profile_io::import_from(media, &path).ok()?;
+            return Some((bundle, util::sha256_hex(&bytes)));
         }
     }
     None
 }
 
-pub fn install_from_file(file: &Path) -> Result<String, String> {
+/// Installs the plugin file the install question looked at. `sha`: its SHA-256 then; a file that
+/// changed since (another file put in its place) is refused.
+pub fn install_from_file(file: &Path, sha: &str) -> Result<String, String> {
     let root = sup()?.root.clone();
-    let (m, _, _) = install_file(&root, file)?;
+    let (m, _, _) = install_checked(&root, file, sha)?;
     log(&format!("Plugin {} {} installed", m.id, m.version));
     reload(Some(m.id.clone()))?;
     Ok(m.name)
 }
 
-/// Trust an author's key (.mdkey): their signed plugins run without Developer mode. Returns their name. Blocks.
-pub fn add_author(file: &Path) -> Result<String, String> {
+pub(crate) fn install_checked(root: &Path, file: &Path, sha: &str) -> Result<(Manifest, PathBuf, Trust), String> {
+    let bytes = read_pack(file)?;
+    if !util::sha256_hex(&bytes).eq_ignore_ascii_case(sha) {
+        return Err("The file changed after it was looked at, so it wasn't installed. Open it again.".into());
+    }
+    install_bytes(root, &bytes)
+}
+
+/// A .mdkey file as the "Trust this author?" question shows it. Reading it trusts nothing.
+#[derive(Clone, Debug)]
+pub struct AuthorInfo {
+    pub key: AuthorKey,
+    /// The key shown short, to compare with what the author published
+    pub fingerprint: String,
+    /// Already trusted on this PC (built in, or added before)
+    pub known: bool,
+    /// Another key is already trusted under this same name: someone may be passing as them
+    pub name_taken: bool,
+}
+
+pub(crate) fn author_info_in(root: &Path, file: &Path) -> Result<AuthorInfo, String> {
     let key = signing::read_key_file(file)?;
+    let cfg = read_config(root);
+    let same_name = |n: &str| n.trim().eq_ignore_ascii_case(&key.name);
+    let known = signing::BUILT_IN.iter().any(|(_, k)| *k == key.key) || cfg.trusted.iter().any(|a| a.key == key.key);
+    let name_taken = signing::BUILT_IN.iter().any(|(n, k)| same_name(n) && *k != key.key) || cfg.trusted.iter().any(|a| same_name(&a.name) && a.key != key.key);
+    Ok(AuthorInfo { fingerprint: signing::fingerprint(&key.key), key, known, name_taken })
+}
+
+/// Reads a .mdkey file for the question. Nothing is trusted until `trust_author`.
+pub fn author_info(file: &Path) -> Result<AuthorInfo, String> {
+    author_info_in(&sup()?.root, file)
+}
+
+pub(crate) fn trust_in(root: &Path, key: AuthorKey) -> Result<(), String> {
+    let mut cfg = read_config(root);
+    cfg.trusted.retain(|a| a.key != key.key);
+    cfg.trusted.push(key);
+    write_config(root, &cfg)
+}
+
+/// Trust an author's key, the one the question showed (the file is not read again): their signed
+/// plugins run without Developer mode. Returns their name. Blocks.
+pub fn trust_author(key: AuthorKey) -> Result<String, String> {
     let name = key.name.clone();
-    change_config(move |c| {
-        c.trusted.retain(|a| a.key != key.key);
-        c.trusted.push(key);
-    })?;
-    log(&format!("Trusted plugin author {name}"));
+    let print = signing::fingerprint(&key.key);
+    trust_in(&sup()?.root, key)?;
+    log(&format!("Trusted plugin author {name} (key {print})"));
     reload(None)?;
     Ok(name)
 }
@@ -1140,6 +1291,84 @@ mod tests {
         assert!(check_manifest(r#"{"id":"a","name":"A","api":2,"dll":"a.dll"}"#).is_ok());
         assert!(check_manifest(r#"{"id":"a","name":"A","api":1,"dll":"a.dll"}"#).unwrap_err().contains("interface"));
         assert!(check_manifest(r#"{"id":"a","name":"A","api":2,"dll":"../a.dll"}"#).unwrap_err().contains("outside"));
+    }
+
+    // the signature check is kept while nothing in the folder changed
+    #[test]
+    fn a_folders_trust_is_kept_until_a_file_changes() {
+        let dir = std::env::temp_dir().join(format!("md-trust-cache-{}", util::now_ms()));
+        fs::create_dir_all(dir.join("icons")).unwrap();
+        fs::write(dir.join("a.dll"), b"one").unwrap();
+        let a = folder_stamp(&dir, &[]);
+        assert_eq!(a, folder_stamp(&dir, &[]));
+        assert_eq!(cached_trust(&dir, &[]), Trust::Unsigned);
+        fs::write(dir.join("icons").join("x.png"), b"x").unwrap();
+        assert_ne!(folder_stamp(&dir, &[]), a, "a new file");
+        let b = folder_stamp(&dir, &[]);
+        fs::write(dir.join("a.dll"), b"longer").unwrap();
+        assert_ne!(folder_stamp(&dir, &[]), b, "a changed file");
+        let key = AuthorKey { name: "x".into(), key: "k".into() };
+        assert_ne!(folder_stamp(&dir, &[key]), folder_stamp(&dir, &[]), "other trusted authors");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // the DLL that runs is the copy, and the copy is what is checked against the signature
+    #[test]
+    fn the_copy_that_runs_is_the_one_checked() {
+        let root = std::env::temp_dir().join(format!("md-shadow-test-{}", util::now_ms()));
+        let (folder, run) = (root.join("plugins").join("demo"), root.join("plugin-run"));
+        fs::create_dir_all(&folder).unwrap();
+        let files = vec![("manifest.json".to_string(), br#"{"id":"demo","name":"Demo","version":"1.0.0","api":2,"dll":"demo.dll"}"#.to_vec()), ("demo.dll".to_string(), b"good dll".to_vec())];
+        for (n, b) in &files {
+            fs::write(folder.join(n), b).unwrap();
+        }
+        let me = signing::read_key_file(&signing::make_key(&root, "Tester", &root).unwrap()).unwrap();
+        fs::write(folder.join(signing::SIG_FILE), signing::sign(&root, &files).unwrap().unwrap().1).unwrap();
+        let cfg = PluginConfig { trusted: vec![me], ..Default::default() };
+        // as signed: the copy is made and kept
+        let copy = prepare_copy(&folder, &run, "demo", &cfg).unwrap();
+        assert_eq!(fs::read(&copy).unwrap(), b"good dll");
+        // a DLL swapped in after signing: refused, and no copy is left to load
+        fs::write(folder.join("demo.dll"), b"evil dll").unwrap();
+        assert!(prepare_copy(&folder, &run, "demo", &cfg).is_err());
+        assert_eq!(fs::read_dir(&run).unwrap().count(), 1, "only the good copy from before");
+        // not trusted and no Developer mode: nothing runs
+        fs::write(folder.join("demo.dll"), b"good dll").unwrap();
+        assert!(prepare_copy(&folder, &run, "demo", &PluginConfig::default()).unwrap_err().contains("doesn't trust"));
+        // unsigned in Developer mode: its copy runs as it is
+        fs::remove_file(folder.join(signing::SIG_FILE)).unwrap();
+        let dev = PluginConfig { dev_mode: true, ..Default::default() };
+        assert!(prepare_copy(&folder, &run, "demo", &dev).is_ok());
+        assert!(prepare_copy(&folder, &run, "other", &dev).unwrap_err().contains("named"));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // opening a .mdkey only reads it: the author is trusted when the question is answered
+    #[test]
+    fn a_key_file_is_only_read_until_the_question_is_answered() {
+        let root = std::env::temp_dir().join(format!("md-author-ask-{}", util::now_ms()));
+        fs::create_dir_all(&root).unwrap();
+        let built_in = signing::BUILT_IN[1].1;
+        let mine = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        let file = root.join("someone.mdkey");
+        let write = |name: &str, key: &str| fs::write(&file, format!(r#"{{"v":1,"name":"{name}","key":"{key}"}}"#)).unwrap();
+        write("Someone", mine);
+        let info = author_info_in(&root, &file).unwrap();
+        assert_eq!((info.key.name.as_str(), info.known, info.name_taken), ("Someone", false, false));
+        assert_eq!(info.fingerprint, signing::fingerprint(mine));
+        assert!(read_config(&root).trusted.is_empty(), "reading the file trusts nobody");
+        trust_in(&root, info.key.clone()).unwrap();
+        trust_in(&root, info.key).unwrap();
+        assert_eq!(read_config(&root).trusted.len(), 1, "trusted once, however often it is added");
+        assert!(author_info_in(&root, &file).unwrap().known);
+        // a built-in key is known; a built-in name with another key is flagged
+        write("x", built_in);
+        assert!(author_info_in(&root, &file).unwrap().known);
+        write(" Minnion ", mine);
+        assert!(author_info_in(&root, &file).unwrap().name_taken);
+        write("minnion", built_in);
+        assert!(!author_info_in(&root, &file).unwrap().name_taken);
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -1208,9 +1437,17 @@ mod tests {
         let again = inspect_in(&root, &path).unwrap();
         assert!(again.runs && again.why.is_none());
         assert_eq!(again.installed.as_deref(), Some("1.2.0"));
+        assert!(!again.downgrade() && again.key.is_none(), "the same version again; unsigned");
+        let older = PackInfo { version: "1.1.9".into(), ..again.clone() };
+        assert!(older.downgrade());
         // a file that isn't a pack is explained
         fs::write(root.join("notes.mdplugin"), b"hello").unwrap();
         assert!(inspect_in(&root, &root.join("notes.mdplugin")).unwrap_err().contains("isn't a .mdplugin"));
+        // Install takes the file that was looked at, not one put in its place since
+        assert_eq!(again.sha, util::sha256_hex(&fs::read(&path).unwrap()));
+        assert!(install_checked(&root, &path, &again.sha).is_ok());
+        fs::write(&path, b"hello").unwrap();
+        assert!(install_checked(&root, &path, &again.sha).unwrap_err().contains("changed after"));
         let _ = fs::remove_dir_all(&root);
     }
 }

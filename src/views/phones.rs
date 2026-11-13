@@ -177,12 +177,14 @@ pub fn draw(app: &mut App, cv: &mut Cv, w: f32, h: f32) -> f32 {
             cv.text_fit(x + 18.0 + 112.0, cy, 21.0, 14.0, 600, th.ink, &page, left_w - 36.0 - 112.0);
             cv.text(x + 18.0, cy + 22.0, 22.0, 14.0, 400, th.slate, "and type the code");
             cv.text(x + 18.0 + 140.0, cy + 18.0, 26.0, 20.0, 700, th.ink, &format!("{} {}", &code[..3], &code[3..]));
-            // the other way in: https for a Wi-Fi you don't trust, or plain when Secure phone link is on
+            // what the link is: the HTTPS page (the safe way in), or the plain one when that was chosen
             if let Some(s) = h.secure_url() {
-                let note = if page == s {
-                    "Secure phone link is on: the phone warns about the certificate once. Settings › Phones turns it off.".to_string()
+                let note = if page != s {
+                    format!("This link is plain http: others on the Wi-Fi can read it. {s} is the safe one (Settings › Phones)")
+                } else if h.plain_served() {
+                    "The phone warns about the certificate once: choose Advanced, then Continue. Phones paired over http:// still work.".to_string()
                 } else {
-                    format!("On a Wi-Fi you don't trust, use {s} (the phone warns once), or turn on Secure phone link in Settings")
+                    "The phone warns about the certificate once: choose Advanced, then Continue.".to_string()
                 };
                 cv.text_fit(x + 18.0, cy + 44.0, 19.0, 12.0, 400, th.slate, &note, left_w - 36.0);
             }
@@ -193,7 +195,8 @@ pub fn draw(app: &mut App, cv: &mut Cv, w: f32, h: f32) -> f32 {
                 cv.fill(x + 18.0 + d as f32 * 10.0, wy + 12.0, 6.0, 6.0, if d < step { th.mint } else { with_alpha(th.slate, 0.4) });
             }
             cv.ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
-            let others = if h.addrs.len() > 1 { format!("  (other addresses: {})", h.addrs[1..].join(", ")) } else { String::new() };
+            let addrs = h.addrs();
+            let others = if addrs.len() > 1 { format!("  (other addresses: {})", addrs[1..].join(", ")) } else { String::new() };
             cv.text_fit(x + 18.0 + 38.0, wy + 6.0, 19.0, 13.0, 400, th.slate, &format!("Waiting for a phone on this Wi-Fi…{others}"), left_w - 36.0 - 38.0);
         }
         None => {

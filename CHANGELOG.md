@@ -3,6 +3,33 @@
 Every MinnionDeck release, newest first. Downloads are on the [Releases](https://github.com/minnnion/MinnionDeck/releases) page.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.2.2] - 2026-11-13
+
+### Added
+- **Password backups** (Settings › Backup › Move to another PC): a backup locked with a password you choose, which opens on another PC or after Windows is installed again. Ordinary backups still open only on the Windows account that made them.
+
+### Changed
+- **Phones connect over HTTPS by default.** The QR code opens the HTTPS page; the phone warns about the certificate once. Phones you paired before keep working: "Allow the plain http page" (Settings › Phones) is switched on for installs that already had phones paired.
+- "Allow imported buttons?" now lists what the buttons will do.
+- The plugin install question shows the signing key's fingerprint and warns before putting an older version over a newer one. Turning on Developer mode asks first.
+- The installer's helpers hand their work to MinnionDeck when it is running.
+
+### Fixed
+- A library or settings file that another program had open for a moment could be set aside, and an empty library saved in its place. It is now waited for, and never saved over.
+- A restore that stopped half-way (the PC went off) could leave pictures and buttons that didn't match. It is now finished or undone at the next start.
+- A key combination that Windows only half sent could leave Ctrl or Shift held down.
+- Pictures that nothing uses any more are cleared out, and looking at a profile file no longer copies its pictures.
+- The window no longer wakes up twice a second when nothing changes, the phone deck is rebuilt only when it changed, and backups no longer pause the window.
+
+### Security
+- A plugin author's key file is trusted only after you confirm it, showing the name and the key's fingerprint.
+- An update to a plugin's profile that adds new things for buttons to do on the PC asks again before they run; plugin buttons in an imported profile ask too.
+- The phone server listens only on this PC's own network addresses, keeps the phone's key out of addresses, and limits message sizes, slow and idle connections, and wrong pairing codes per address.
+- The plugin DLL that runs is the one checked against its signature, and Install refuses a file that changed after it was looked at.
+- Update signatures name the version they are for, so an older installer can't be passed off as a newer release.
+- Pictures in imported profiles are checked like pictures you import by hand, with size limits when they are opened.
+- Only the website and MinnionDeck's own editor page can talk to the website link.
+
 ## [0.2.1] - 2026-11-11
 
 ### Added
@@ -67,6 +94,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 First release of MinnionDeck, the native Rust desktop app: profiles, pages and buttons, phones over Wi-Fi, the Marketplace, tray, backups and updates.
 
+[0.2.2]: https://github.com/minnnion/MinnionDeck/compare/v0.2.1...v0.2.2
 [0.2.0]: https://github.com/minnnion/MinnionDeck/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/minnnion/MinnionDeck/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/minnnion/MinnionDeck/compare/v0.1.0...v0.1.1

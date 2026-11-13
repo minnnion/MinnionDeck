@@ -100,7 +100,13 @@ pub struct App {
     /// The marketplace's list is being read now.
     pub market_fetching: bool,
     pub market_remove: Option<usize>,
+    /// When the list was last asked for (to ask again every 10 minutes)
     pub market_checked: f64,
+    /// When the list last came in, and why the last try failed (the saved list is shown then)
+    pub market_ok_at: Option<f64>,
+    pub market_error: Option<String>,
+    /// Check now was pressed: the answer is said when the list comes in
+    pub market_asked: bool,
     pub market_detail: Option<crate::views::marketplace::Detail>,
     pub grid_menu: bool,
     pub auto_switch: bool,
@@ -141,11 +147,17 @@ pub struct App {
     pub phones: crate::app_phones::PhoneGlue,
     /// A plugin file waiting for Install, and files or links the app was started with (app_open.rs).
     pub install_ask: Option<crate::app_open::InstallAsk>,
+    /// The password asked for a password backup (Settings › Backup)
+    pub portable: Option<crate::views::portable_dialog::PortableAsk>,
+    /// An author's key waiting for "Trust" (it is never trusted without the click)
+    pub author_ask: Option<crate::app_open::AuthorAsk>,
     /// Plugin profiles that have a new version the user changed: each waits for an answer
     /// (views/profile_update.rs). `profiles_checked`: the start-up check has run.
     pub profile_offers: Vec<crate::views::profile_update::ProfileOffer>,
     pub profiles_checked: bool,
     pub pending_open: Vec<String>,
+    /// When "Allow imported buttons?" was last answered no
+    pub trust_denied: Option<f64>,
 }
 
 pub const APP_ICON: [&str; 16] = [
@@ -259,6 +271,9 @@ impl App {
             market_fetching: false,
             market_remove: None,
             market_checked: -1000.0,
+            market_ok_at: None,
+            market_error: None,
+            market_asked: false,
             market_detail: None,
             grid_menu: false,
             auto_switch: true,
@@ -285,10 +300,13 @@ impl App {
             upd: crate::app_updates::UpdateGlue::new(),
             phones: crate::app_phones::PhoneGlue::start(&lib_root, &egui_ctx, shot_run),
             install_ask: None,
+            author_ask: None,
+            portable: None,
             profile_offers: vec![],
             profiles_checked: false,
             // what the app was started with: a double-clicked file, or a link
             pending_open: if shot_run { std::env::args().skip(1).filter(|a| !a.starts_with("--")).collect() } else { vec![] },
+            trust_denied: None,
         };
         // the Settings page as it was left (not for a screenshot)
         app.settings.apply(&mut app.st);
@@ -301,6 +319,7 @@ impl App {
             app.auto_switch = *on == 1;
         }
         app.settings.prev_auto = app.auto_switch;
+        app.init_phone_link();
         app.init_autostart();
         if shot_run {
             app.init_web_link();
@@ -311,7 +330,7 @@ impl App {
         if shot_run {
             let _ = crate::backend::updates::Source::load(&app.lib.paths.root);
         }
-        if let Some(n) = note {
+        if let Some(n) = note.or_else(|| app.settings.note.take()) {
             app.toast = Some((n, 0.5));
         }
         let args: Vec<String> = std::env::args().collect();
@@ -523,13 +542,8 @@ impl App {
             },
             _ => {
                 let steps = self.lib.steps_of(&t);
-                // only buttons that can act on the PC by themselves ask (plugin buttons don't)
-                if self.lib.needs_trust() && crate::backend::actions::risky(&steps) {
-                    let name = self.sample.profiles.get(self.sample.active).map(|p| p.name.clone()).unwrap_or_default();
-                    if !crate::backend::actions::allow_imported(&name) {
-                        return;
-                    }
-                    self.lib.trust();
+                if !self.allow_press(&steps, now) {
+                    return;
                 }
                 let button = self.plugin_ctx(&t);
                 let tx = self.ran_tx.clone();
@@ -542,6 +556,30 @@ impl App {
         }
     }
 
+    /// Whether a button with these steps may run now. A button of an imported profile that
+    /// acts on the PC (or uses a plugin the profile didn't come with) asks first, once for the
+    /// profile, saying what the buttons do. The same on the PC and from a phone. After a "no",
+    /// it doesn't ask again for a few seconds, so a phone can't fill the screen with questions.
+    pub fn allow_press(&mut self, steps: &[crate::backend::actions::Step], now: f64) -> bool {
+        if !self.lib.asks_before(steps) {
+            return true;
+        }
+        if self.trust_denied.is_some_and(|t| now - t < 10.0) {
+            return false;
+        }
+        let name = self.sample.profiles.get(self.sample.active).map(|p| p.name.clone()).unwrap_or_default();
+        let this: Vec<String> = steps.iter().filter(|s| crate::backend::actions::step_asks(s, None)).map(crate::backend::actions::describe).collect();
+        let others: Vec<String> = self.lib.asking_lines().into_iter().filter(|l| !this.contains(l)).collect();
+        if !crate::backend::actions::allow_imported(&name, &this, &others) {
+            // the question held the window up: count from when it was answered
+            self.trust_denied = Some(self.egui.input(|i| i.time).max(now));
+            return false;
+        }
+        self.trust_denied = None;
+        self.lib.trust();
+        true
+    }
+
     pub fn theme(&self) -> Theme {
         if self.dark { Theme::dark() } else { Theme::light() }
     }
@@ -552,9 +590,10 @@ impl App {
 
     pub fn crumb(&self) -> String {
         match self.view {
+            // (the lists can be empty for a moment, after a restore or a damaged library)
             View::Deck => {
-                let p = &self.sample.profiles[self.sample.active].name;
-                let page = &self.sample.pages[self.sample.page].name;
+                let p = self.sample.profiles.get(self.sample.active).map(|p| p.name.as_str()).unwrap_or("");
+                let page = self.sample.pages.get(self.sample.page).map(|p| p.name.as_str()).unwrap_or("");
                 format!("— {p} / {page}")
             }
             v => format!("— {}", VIEWS[Self::view_index(v)].1),
@@ -587,7 +626,8 @@ impl App {
         }
         let light = Color32::from_rgb(0xe4, 0xea, 0xf6);
         let tw = cv.text(36.0, 7.5, 21.0, 15.0, 700, light, "Minniondeck");
-        if std::env::var("MD_MEASURE").is_ok() { for (sz,wt,t) in [(15.0,700u16,"Minniondeck"),(15.0,400,"— Settings"),(14.0,600,"Edit layout"),(14.0,400,"5 × 3 grid"),(14.0,600,"Show on phones"),(16.0,400,"My profile /"),(12.0,600,"Marketplace"),(12.0,600,"Profiles"),(18.0,700,"Pair a new phone"),(16.0,600,"+ New profile")] { eprintln!("{t}: {} (size {sz} w{wt})", cv.measure(sz,wt,t)); } }
+        static MEASURE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *MEASURE.get_or_init(|| std::env::var("MD_MEASURE").is_ok()) { for (sz,wt,t) in [(15.0,700u16,"Minniondeck"),(15.0,400,"— Settings"),(14.0,600,"Edit layout"),(14.0,400,"5 × 3 grid"),(14.0,600,"Show on phones"),(16.0,400,"My profile /"),(12.0,600,"Marketplace"),(12.0,600,"Profiles"),(18.0,700,"Pair a new phone"),(16.0,600,"+ New profile")] { eprintln!("{t}: {} (size {sz} w{wt})", cv.measure(sz,wt,t)); } }
         let crumb = self.crumb();
         let max = w - 36.0 - tw - 10.0 - 10.0 - 3.0 * 30.0 - 2.0 * 10.0 - 10.0;
         cv.text_fit(36.0 + tw + 10.0, 7.5, 21.0, 15.0, 400, light, &crumb, max);
@@ -771,7 +811,10 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         let win = ctx.content_rect();
         let th = self.theme();
-        ctx.set_visuals(if self.dark { egui::Visuals::dark() } else { egui::Visuals::light() });
+        // the theme is set when it changes, not rebuilt every frame
+        if ui.visuals().dark_mode != self.dark {
+            ctx.set_visuals(if self.dark { egui::Visuals::dark() } else { egui::Visuals::light() });
+        }
 
         let now = ctx.input(|i| i.time);
         if let Some(v) = self.pending_view.take() {
@@ -852,6 +895,8 @@ impl eframe::App for App {
             crate::views::plugin_dialog::dialog(self, ui, win);
         }
         crate::views::install_dialog::dialog(self, ui, win);
+        crate::views::author_dialog::dialog(self, ui, win);
+        crate::views::portable_dialog::dialog(self, ui, win);
         crate::views::choose_pages::dialog(self, ui, win);
         crate::views::profile_update::dialog(self, ui, win);
         // once, a few seconds after start: profiles whose plugin's profile changed (also the ones

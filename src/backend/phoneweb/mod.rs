@@ -355,9 +355,14 @@ impl Hub {
         (self.repaint)();
     }
 
-    /// The certificate (DER), for installing it on a phone that insists on trusting it.
+    /// This PC's own certificate (DER), to install on a phone so the page is trusted (cert.rs).
     pub fn cert_der(&self) -> Option<Vec<u8>> {
-        fs::read(self.file.parent()?.join("cert.der")).ok()
+        cert::authority_der(self.file.parent()?)
+    }
+
+    /// Its fingerprint, to compare with what the phone shows when it is installed.
+    pub fn cert_fingerprint(&self) -> Option<String> {
+        self.cert_der().map(|d| cert::fingerprint(&d))
     }
 
     // ----- the address and the code -----

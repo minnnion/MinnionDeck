@@ -6,6 +6,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 ## [0.2.2] - 2026-11-13
 
 ### Added
+- **Stop the certificate warning:** the PC makes its own certificate authority for the phone page, limited to home-network addresses. Install it on a phone once (the phone page shows how) and the page is trusted, also from the Home Screen and after the PC's address changes.
 - **Password backups** (Settings › Backup › Move to another PC): a backup locked with a password you choose, which opens on another PC or after Windows is installed again. Ordinary backups still open only on the Windows account that made them.
 
 ### Changed
@@ -16,7 +17,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Fixed
 - A library or settings file that another program had open for a moment could be set aside, and an empty library saved in its place. It is now waited for, and never saved over.
-- A restore that stopped half-way (the PC went off) could leave pictures and buttons that didn't match. It is now finished or undone at the next start.
+- A restore that stopped half-way (the PC went off) could leave pictures and buttons that didn't match. It is now finished or undone at the next start, and old pictures are kept until it is complete.
+- A profile file with one damaged picture comes in without it, instead of not at all.
 - A key combination that Windows only half sent could leave Ctrl or Shift held down.
 - Pictures that nothing uses any more are cleared out, and looking at a profile file no longer copies its pictures.
 - The window no longer wakes up twice a second when nothing changes, the phone deck is rebuilt only when it changed, and backups no longer pause the window.

@@ -425,6 +425,10 @@ fn route(hub: &Hub, h: &Head, s: &mut impl Write) {
             Some(b) => respond(s, h, "200 OK", "image/png", &b, "max-age=86400"),
             None => no(s),
         },
+        "/cert-info" => {
+            let fp = hub.cert_fingerprint().unwrap_or_default();
+            respond(s, h, "200 OK", "application/json", json!({ "fingerprint": fp }).to_string().as_bytes(), "no-cache")
+        }
         "/minniondeck.cer" => match hub.cert_der() {
             Some(b) => respond(s, h, "200 OK", "application/x-x509-ca-cert", &b, "no-cache"),
             None => no(s),

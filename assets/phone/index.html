@@ -49,6 +49,8 @@ html, body { margin: 0; height: 100%; background: var(--ground); color: var(--te
 .btn:active { transform: translate(3px, 3px); box-shadow: none; }
 .big { font-size: 44px; font-weight: 700; letter-spacing: 8px; margin: 6px 0; color: var(--mint); }
 .err { color: var(--coral) !important; }
+.lnk { color: var(--mint); font-size: 14px; }
+#certfp { font-size: 12px; word-break: break-all; }
 #toast { position: fixed; left: 50%; bottom: calc(14px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 8; max-width: 90%; padding: 8px 14px; border: 3px solid var(--text); background: var(--panel); font-size: 14px; display: none; text-align: center; }
 #toast.err { border-color: var(--coral); }
 #lost { z-index: 9; background: rgba(16, 19, 28, .92); }
@@ -73,6 +75,7 @@ html, body { margin: 0; height: 100%; background: var(--ground); color: var(--te
       <input id="code" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="000000" aria-label="Code from the PC">
       <button class="btn" id="pairgo">Pair</button>
       <p class="err" id="pairerr"></p>
+      <p><a href="#" class="lnk" id="trustgo">Stop the certificate warning</a></p>
       <div id="ios-pair" hidden>
         <p>On iPhone, for the full app look: tap Share, then Add to Home Screen, open Minniondeck from your Home Screen and type the code there.</p>
       </div>
@@ -102,6 +105,32 @@ html, body { margin: 0; height: 100%; background: var(--ground); color: var(--te
       </ol>
     </div>
     <button class="btn plain" id="fsno">Not now</button>
+  </div>
+</div>
+
+<div class="screen" id="trust">
+  <div class="card">
+    <h1>Stop the certificate warning</h1>
+    <p>Your PC makes its own certificate for this page. Install it on this phone once and the warning is gone, also from the Home Screen. It only works for addresses on your home network, so it can't vouch for any other website.</p>
+    <a class="btn" id="certdl" href="/minniondeck.cer" download="MinnionDeck.cer">Download the certificate</a>
+    <div id="trust-ios" hidden>
+      <ol>
+        <li>Tap Download above, then Allow.</li>
+        <li>Open Settings, tap Profile Downloaded, then Install.</li>
+        <li>Open Settings › General › About › Certificate Trust Settings and turn on MinnionDeck on this PC.</li>
+        <li>Close this page and open it again.</li>
+      </ol>
+    </div>
+    <div id="trust-android" hidden>
+      <ol>
+        <li>Tap Download above.</li>
+        <li>Open Settings and search for CA certificate. Choose Install a certificate › CA certificate, then Install anyway.</li>
+        <li>Pick MinnionDeck.cer from Downloads.</li>
+        <li>Close this page and open it again.</li>
+      </ol>
+    </div>
+    <p id="certfp"></p>
+    <button class="btn plain" id="trustno">Back</button>
   </div>
 </div>
 
@@ -313,6 +342,14 @@ html, body { margin: 0; height: 100%; background: var(--ground); color: var(--te
   $("prev").onclick = function () { var ps = pages(), i = ps.indexOf(pageById(cur)); if (i > 0) { cur = ps[i - 1].id; render(); send({ t: "page", page: cur }); } };
   $("next").onclick = function () { var ps = pages(), i = ps.indexOf(pageById(cur)); if (i >= 0 && i < ps.length - 1) { cur = ps[i + 1].id; render(); send({ t: "page", page: cur }); } };
   $("pairgo").onclick = doPair;
+  // the certificate help: steps for this phone, and the fingerprint to compare with the PC's
+  $("trustgo").onclick = function (e) {
+    e.preventDefault();
+    $("trust-ios").hidden = !isIOS; $("trust-android").hidden = isIOS;
+    fetch("/cert-info").then(function (r) { return r.json(); }).then(function (j) { if (j.fingerprint) $("certfp").textContent = "Fingerprint (the same on the PC's Phones page): " + j.fingerprint; }).catch(function () {});
+    show("trust", true);
+  };
+  $("trustno").onclick = function () { show("trust", false); };
   $("code").addEventListener("keydown", function (e) { if (e.key === "Enter") doPair(); });
   function enterFs() {
     var el = document.documentElement, f = el.requestFullscreen || el.webkitRequestFullscreen;

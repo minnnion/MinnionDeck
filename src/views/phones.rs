@@ -181,10 +181,10 @@ pub fn draw(app: &mut App, cv: &mut Cv, w: f32, h: f32) -> f32 {
             if let Some(s) = h.secure_url() {
                 let note = if page != s {
                     format!("This link is plain http: others on the Wi-Fi can read it. {s} is the safe one (Settings › Phones)")
-                } else if h.plain_served() {
-                    "The phone warns about the certificate once: choose Advanced, then Continue. Phones paired over http:// still work.".to_string()
                 } else {
-                    "The phone warns about the certificate once: choose Advanced, then Continue.".to_string()
+                    // the phone page has "Stop the certificate warning" with the steps
+                    let fp = h.cert_fingerprint().map(|f| format!(" · {f}")).unwrap_or_default();
+                    format!("Warning on the phone? Tap \"Stop the certificate warning\" there{fp}")
                 };
                 cv.text_fit(x + 18.0, cy + 44.0, 19.0, 12.0, 400, th.slate, &note, left_w - 36.0);
             }

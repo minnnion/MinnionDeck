@@ -14,7 +14,7 @@ Big square buttons for apps, keys, sounds, timers, weather, music and more, on y
 
 **[Download](https://github.com/minnnion/MinnionDeck/releases/latest)** · **[Website](https://minniondeck.github.io)** · **[Features](#features)** · **[How it works](#how-it-works)** · **[Changelog](CHANGELOG.md)** · **[Privacy](PRIVACY.md)** · **[Terms](TERMS.md)**
 
-<img src="docs/screenshots/deck.png" alt="MinnionDeck showing the Weather profile" width="880">
+<img src="docs/demo.gif" alt="MinnionDeck: buttons on the PC, then scanning the QR code so the phone becomes the deck" width="880">
 
 </div>
 

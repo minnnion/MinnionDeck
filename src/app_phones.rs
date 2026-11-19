@@ -86,6 +86,11 @@ impl App {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         let on = |k: &str| self.st.get(k).copied();
         (&self.sample.pages, &self.sample.tiles, self.sample.page, self.sample.active, self.dark).hash(&mut h);
+        // what each button shows now: a plugin's state, text or picture (Live) doesn't count as a change
+        // of the library, so it isn't in the tiles' hash, but the panel and phones must show it
+        for t in &self.sample.tiles {
+            (t.look_now(), t.shown(), t.live.icon.as_ref().map(|i| crate::ui::images::live_stamp(i.trim_start_matches("png:")))).hash(&mut h);
+        }
         self.sample.profiles.get(self.sample.active).map(|p| &p.name).hash(&mut h);
         ["follow", "names", "vibe", "awake"].map(on).hash(&mut h);
         h.finish()

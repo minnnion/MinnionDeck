@@ -25,9 +25,18 @@ pics!(
 /// Pictures a plugin puts on a button while it runs, by the name the button gives them.
 static LIVE: std::sync::Mutex<Option<HashMap<String, Vec<u8>>>> = std::sync::Mutex::new(None);
 
+/// How many times each live picture was (re)registered: a plugin may draw new pixels under the same name.
+static STAMPS: std::sync::Mutex<Option<HashMap<String, u64>>> = std::sync::Mutex::new(None);
+
 pub fn register_live(name: &str, data: Vec<u8>) {
     LIVE.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(name.to_string(), data);
+    *STAMPS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).entry(name.to_string()).or_default() += 1;
     CACHE.with(|c| c.borrow_mut().remove(name));
+}
+
+/// Changes whenever the live picture `name` gets new pixels (0: never registered).
+pub fn live_stamp(name: &str) -> u64 {
+    STAMPS.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(name).copied()).unwrap_or(0)
 }
 
 /// Whether a picture was registered by register_live.

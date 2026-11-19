@@ -103,6 +103,102 @@ fn default_doc() -> Value {
     })
 }
 
+/// Set in a library once it was given the Starter profile (or was made without it on purpose),
+/// so a Starter that was deleted never comes back.
+const STARTER_GIVEN: &str = "starterGiven";
+/// The Starter profile's id.
+const STARTER_ID: &str = "starter";
+
+/// One button of the Starter profile: built-in action `kind` with its settings `f`, at (x, y).
+fn starter_button(n: usize, x: usize, y: usize, label: &str, glyph: &str, colour: &str, kind: &str, f: Value) -> Value {
+    let mut b = default_button();
+    b["id"] = json!(format!("t-starter-{n}"));
+    b["label"] = json!(label);
+    b["x"] = json!(x);
+    b["y"] = json!(y);
+    let mut step = json!({ "type": kind });
+    if f.as_object().is_some_and(|o| !o.is_empty()) {
+        step["f"] = f;
+    }
+    b["steps"] = json!([step]);
+    let mut st = default_state();
+    st["glyph"] = json!(glyph);
+    st["bg"] = json!(colour);
+    b["states"] = json!([st]);
+    b
+}
+
+/// A new library: the Starter profile, made of the app's own actions only (sound, media keys,
+/// shortcuts, a website, pages), so a new install never opens on an empty deck. Nothing on it
+/// opens a program, types or clicks.
+fn starter_doc() -> Value {
+    let key = |keys: &str| json!({ "keys": keys });
+    let mut mic = starter_button(3, 2, 0, "Mic", "mic", "sky", "mic", json!({}));
+    let mut muted = default_state();
+    muted["name"] = json!("Mic muted");
+    muted["text"] = json!("Muted");
+    muted["glyph"] = json!("mic");
+    muted["bg"] = json!("coral");
+    mic["states"][0]["name"] = json!("Mic on");
+    mic["states"].as_array_mut().expect("array").push(muted);
+    let home = vec![
+        starter_button(1, 0, 0, "Volume +", "speaker", "sky", "vol", json!({ "direction": "Up", "amount": "10" })),
+        starter_button(2, 1, 0, "Volume −", "speaker", "sky", "vol", json!({ "direction": "Down", "amount": "10" })),
+        mic,
+        starter_button(4, 3, 0, "Mute sound", "speaker", "sky", "key", key("VolumeMute")),
+        starter_button(5, 4, 0, "More", "folder", "tile", "page", json!({ "page": "p-starter-more" })),
+        starter_button(6, 0, 1, "Previous", "rewind", "mint", "key", key("MediaTrackPrevious")),
+        starter_button(7, 1, 1, "Play / pause", "playpause", "mint", "key", key("MediaPlayPause")),
+        starter_button(8, 2, 1, "Next", "skip", "mint", "key", key("MediaTrackNext")),
+        starter_button(9, 3, 1, "Screenshot", "camera", "peach", "key", key("Win+Shift+S")),
+        starter_button(10, 4, 1, "Desktop", "monitor", "peach", "key", key("Win+D")),
+        starter_button(11, 0, 2, "Copy", "keyboard", "lilac", "key", key("Ctrl+C")),
+        starter_button(12, 1, 2, "Paste", "keyboard", "lilac", "key", key("Ctrl+V")),
+        starter_button(13, 2, 2, "Undo", "rewind", "lilac", "key", key("Ctrl+Z")),
+        starter_button(14, 3, 2, "Task Manager", "gear", "peach", "key", key("Ctrl+Shift+Escape")),
+        starter_button(15, 4, 2, "MinnionDeck", "globe", "sun", "url", json!({ "url": "https://github.com/minnnion/MinnionDeck" })),
+    ];
+    let more = vec![
+        starter_button(16, 0, 0, "Back", "up", "tile", "back", json!({})),
+        starter_button(17, 1, 0, "Explorer", "folder", "peach", "key", key("Win+E")),
+        starter_button(18, 2, 0, "Settings", "gear", "peach", "key", key("Win+I")),
+        starter_button(19, 3, 0, "Lock PC", "lock", "coral", "key", key("Win+L")),
+    ];
+    json!({
+        "profiles": [{ "id": STARTER_ID, "name": "Starter", "body": "sky", "icon": "star", "auto": "Never",
+            "tree": [
+                { "kind": "page", "id": "p-starter-home", "name": "Home", "board": "Board-starter-home", "cols": 5, "rows": 3 },
+                { "kind": "page", "id": "p-starter-more", "name": "More", "board": "Board-starter-more", "cols": 5, "rows": 3 }
+            ] }],
+        "boards": { "Board-starter-home": home, "Board-starter-more": more },
+        "designs": [],
+        "active": { "prof": STARTER_ID, "page": "p-starter-home" },
+        STARTER_GIVEN: true
+    })
+}
+
+/// The library as it is opened: one that was never given the Starter profile and is still only
+/// the empty "My profile" (a new install of an earlier version) gets it now. Anything else, or
+/// a library that was given it once (even if it was deleted since), stays as it is.
+fn with_starter(mut doc: Value) -> Value {
+    if doc.get(STARTER_GIVEN).and_then(|v| v.as_bool()).unwrap_or(false) {
+        return doc;
+    }
+    if doc_is_untouched(&doc) {
+        return starter_doc();
+    }
+    // the user's own library: marked, so it never gets the Starter later on
+    doc[STARTER_GIVEN] = json!(true);
+    doc
+}
+
+/// Only the empty "My profile" with its empty page: what a new install of an earlier version
+/// started with (and what a damaged or locked library is opened as).
+fn doc_is_untouched(doc: &Value) -> bool {
+    let profiles = doc["profiles"].as_array().map(|a| a.as_slice()).unwrap_or(&[]);
+    profiles.len() == 1 && str_of(&profiles[0], "id") == "mine" && doc["boards"].as_object().is_some_and(|b| b.values().all(|v| v.as_array().is_some_and(|a| a.is_empty())))
+}
+
 fn default_button() -> Value {
     json!({ "id": "", "label": "", "x": 0, "y": 0, "w": 1, "h": 1, "mode": "single", "steps": [],
         "style": { "shape": "full", "textPos": "bottom" }, "states": [], "cur": 0,
@@ -320,7 +416,11 @@ impl Library {
     /// Finds the data folder, reads the library (copying yours from the Minniondeck app the first
     /// time) and returns it with what the window shows, plus a message for the user, if any.
     pub fn open() -> (Library, Sample, Option<String>) {
-        let paths = Paths::find();
+        Library::open_at(Paths::find())
+    }
+
+    /// open on the data folder `paths` (tests use a folder of their own).
+    fn open_at(paths: Paths) -> (Library, Sample, Option<String>) {
         // a restore that stopped half-way (the PC went off) is finished or undone first, before
         // the folders are made (an empty media folder made now would hide where it stopped)
         let restore_note = super::backups::finish_interrupted_restore(&paths);
@@ -332,14 +432,17 @@ impl Library {
         let file = paths.library_file();
         let mut blocked = None;
         let doc = match load(&file, |f: &Path| std::fs::read(f)) {
-            Loaded::Missing => default_doc(),
-            Loaded::Doc(d) => d,
+            Loaded::Missing => starter_doc(),
+            Loaded::Doc(d) => with_starter(d),
             Loaded::Damaged(e) => {
                 // keep the damaged file aside, never overwrite it
                 let aside = paths.library.join(format!("library-unreadable-{}.mdsave", now_ms()));
                 let _ = std::fs::rename(&file, &aside);
                 note = Some(format!("Your library couldn't be read ({e}). It was kept as {}.", aside.file_name().and_then(|n| n.to_str()).unwrap_or("")));
-                default_doc()
+                // empty, and marked: the Starter doesn't come back in place of your buttons
+                let mut d = default_doc();
+                d[STARTER_GIVEN] = json!(true);
+                d
             }
             Loaded::Locked(e) => {
                 // the file is fine as far as anyone knows: it must not be saved over with an empty library
@@ -1004,6 +1107,7 @@ impl Library {
     /// add_profile_file on a library that is already open (it isn't written here).
     fn add_profile_file_to(lib: &mut Library, s: &mut Sample, bundle: &Value) -> Result<String, String> {
         let untouched = lib.is_untouched();
+        let starter_only = lib.only_starter();
         let (name, _, _) = lib.import_bundle(s, bundle)?;
         let new = lib.doc["profiles"].as_array().and_then(|a| a.last()).cloned().unwrap_or(Value::Null);
         if untouched {
@@ -1014,8 +1118,8 @@ impl Library {
                 b.remove("Board-1");
             }
         }
-        // the first one added is the one shown
-        if untouched {
+        // the first one added is the one shown (the Starter stays, next to it)
+        if untouched || starter_only {
             let first_page = fn_first_page(new.get("tree"));
             lib.doc["active"] = json!({ "prof": str_of(&new, "id"), "page": first_page });
         }
@@ -1024,8 +1128,14 @@ impl Library {
 
     /// Only the empty "My profile" with its empty page: what a new install starts with.
     fn is_untouched(&self) -> bool {
+        doc_is_untouched(&self.doc)
+    }
+
+    /// Only the Starter profile is here (a new install): a plugin profile Setup adds goes beside
+    /// it and is the one shown.
+    fn only_starter(&self) -> bool {
         let profiles = self.doc["profiles"].as_array().map(|a| a.as_slice()).unwrap_or(&[]);
-        profiles.len() == 1 && str_of(&profiles[0], "id") == "mine" && self.doc["boards"].as_object().is_some_and(|b| b.values().all(|v| v.as_array().is_some_and(|a| a.is_empty())))
+        profiles.len() == 1 && str_of(&profiles[0], "id") == STARTER_ID
     }
 
     /// Adds an imported profile (as profile_io::import_from hands it over) with new ids for
@@ -2315,5 +2425,131 @@ mod choice_tests {
             "tree": [{ "kind": "page", "id": "o", "name": "OBS" }, { "kind": "page", "id": "t", "name": "Twitch" }] } });
         let t = with_choices(&packed, &["twitch".to_string()]);
         assert_eq!(t["profile"]["tree"].as_array().unwrap().iter().map(|n| n["name"].as_str().unwrap()).collect::<Vec<_>>(), vec!["Twitch"]);
+    }
+}
+
+#[cfg(test)]
+mod starter {
+    use super::*;
+
+    fn temp_paths(tag: &str) -> Paths {
+        let dir = std::env::temp_dir().join(format!("md-lib-starter-{tag}-{}-{}", std::process::id(), now_ms()));
+        Paths { root: dir.clone(), library: dir.join("library"), media: dir.join("library").join("media"), backups: dir.join("backups") }
+    }
+
+    fn profile_names(lib: &Library) -> Vec<String> {
+        lib.doc["profiles"].as_array().unwrap().iter().map(|p| str_of(p, "name").to_string()).collect()
+    }
+
+    #[test]
+    fn a_new_data_folder_opens_on_the_starter_profile() {
+        let paths = temp_paths("new");
+        let (lib, s, _) = Library::open_at(paths.clone());
+        assert_eq!(profile_names(&lib), vec!["Starter"]);
+        assert_eq!(s.profiles[0].name, "Starter");
+        assert_eq!(s.pages.iter().filter(|p| !p.folder).count(), 2);
+        assert_eq!(s.tiles.iter().filter(|t| t.page == s.page).count(), 15, "Home is full");
+        assert_eq!(lib.doc[STARTER_GIVEN], true);
+        let _ = std::fs::remove_dir_all(&paths.root);
+    }
+
+    #[test]
+    fn a_deleted_starter_never_comes_back() {
+        let paths = temp_paths("deleted");
+        let (mut lib, _, _) = Library::open_at(paths.clone());
+        // the user removes the Starter and makes an empty profile of their own
+        lib.doc["profiles"] = json!([{ "id": "mine", "name": "My profile", "tree": [{ "kind": "page", "id": "p-1", "name": "Page 1", "board": "Board-1", "cols": 5, "rows": 3 }] }]);
+        lib.doc["boards"] = json!({ "Board-1": [] });
+        lib.doc["active"] = json!({ "prof": "mine", "page": "p-1" });
+        lib.write().unwrap();
+        let (again, _, _) = Library::open_at(paths.clone());
+        assert_eq!(profile_names(&again), vec!["My profile"], "an empty library that was given the Starter stays empty");
+        let _ = std::fs::remove_dir_all(&paths.root);
+    }
+
+    #[test]
+    fn a_library_with_profiles_gets_no_starter_ever() {
+        let paths = temp_paths("mine");
+        paths.make_folders().unwrap();
+        let mut doc = default_doc();
+        doc["profiles"][0]["name"] = json!("Work");
+        doc["boards"]["Board-1"] = json!([{ "id": "t1", "label": "Hi", "x": 0, "y": 0, "steps": [{ "type": "key", "f": { "keys": "Ctrl+C" } }] }]);
+        let mut lib = Library::for_test(paths.clone(), doc);
+        lib.write().unwrap();
+        let (opened, _, _) = Library::open_at(paths.clone());
+        assert_eq!(profile_names(&opened), vec!["Work"]);
+        assert_eq!(opened.doc[STARTER_GIVEN], true, "marked, so emptying it later doesn't bring the Starter");
+        let _ = std::fs::remove_dir_all(&paths.root);
+    }
+
+    #[test]
+    fn an_untouched_library_of_an_earlier_version_gets_the_starter() {
+        let paths = temp_paths("old");
+        paths.make_folders().unwrap();
+        let mut lib = Library::for_test(paths.clone(), default_doc());
+        lib.write().unwrap();
+        let (opened, _, _) = Library::open_at(paths.clone());
+        assert_eq!(profile_names(&opened), vec!["Starter"]);
+        let _ = std::fs::remove_dir_all(&paths.root);
+    }
+
+    #[test]
+    fn a_plugin_profile_from_setup_goes_beside_the_starter_and_is_shown() {
+        let paths = temp_paths("setup");
+        let (mut lib, mut s, _) = Library::open_at(paths.clone());
+        let bundle = json!({ "profile": { "name": "Timer", "body": "mint", "icon": "hourglass", "tree": [
+                { "kind": "page", "id": "p1", "name": "Main", "cols": 5, "rows": 3, "buttons": [] }] },
+            "designs": [], "drawnGifs": [], "gifFiles": [], "images": [], "plugins": [] });
+        Library::add_profile_file_to(&mut lib, &mut s, &bundle).unwrap();
+        assert_eq!(profile_names(&lib), vec!["Starter", "Timer"]);
+        let timer = str_of(&lib.doc["profiles"][1], "id").to_string();
+        assert_eq!(str_of(&lib.doc["active"], "prof"), timer);
+        let _ = std::fs::remove_dir_all(&paths.root);
+    }
+
+    #[test]
+    fn every_starter_button_is_a_safe_built_in_action_that_works() {
+        let doc = starter_doc();
+        let built_in: Vec<&str> = crate::backend::catalog::actions().iter().filter(|a| a.plugin.is_empty()).map(|a| a.id).collect();
+        let icons: Vec<&str> = crate::ui::icons::BUILTIN.iter().map(|i| i.0).collect();
+        let pages: Vec<&str> = doc["profiles"][0]["tree"].as_array().unwrap().iter().map(|n| str_of(n, "id")).collect();
+        let mut ids = HashSet::new();
+        for (board, buttons) in doc["boards"].as_object().unwrap() {
+            assert!(doc["profiles"][0]["tree"].as_array().unwrap().iter().any(|n| str_of(n, "board") == board));
+            for b in buttons.as_array().unwrap() {
+                assert!(ids.insert(str_of(b, "id").to_string()), "ids are unique");
+                assert!(num_of(b, "x", 9) < 5 && num_of(b, "y", 9) < 3, "on the 5 x 3 grid");
+                let step = &b["steps"][0];
+                let kind = str_of(step, "type");
+                assert!(built_in.contains(&kind), "{kind} is a built-in action");
+                assert!(!["run", "text", "click"].contains(&kind), "nothing opens programs, types or clicks");
+                match kind {
+                    "key" => {
+                        super::super::actions::parse_keys(str_of(&step["f"], "keys")).unwrap();
+                    }
+                    "url" => super::super::actions::check_url(str_of(&step["f"], "url")).unwrap(),
+                    "page" => assert!(pages.contains(&str_of(&step["f"], "page"))),
+                    _ => {}
+                }
+                for st in b["states"].as_array().unwrap() {
+                    assert!(icons.contains(&str_of(st, "glyph")), "{} is a built-in icon", str_of(st, "glyph"));
+                }
+            }
+        }
+        // two places never share a spot on a page
+        for buttons in doc["boards"].as_object().unwrap().values() {
+            let spots: HashSet<(usize, usize)> = buttons.as_array().unwrap().iter().map(|b| (num_of(b, "x", 0), num_of(b, "y", 0))).collect();
+            assert_eq!(spots.len(), buttons.as_array().unwrap().len());
+        }
+    }
+
+    #[test]
+    fn the_starter_comes_back_the_same_after_the_window_stores_it() {
+        let paths = temp_paths("same");
+        let (mut lib, mut s, _) = Library::open_at(paths.clone());
+        let before = lib.doc["boards"].clone();
+        lib.store_pages(&mut s);
+        assert_eq!(lib.doc["boards"]["Board-starter-home"], before["Board-starter-home"]);
+        let _ = std::fs::remove_dir_all(&paths.root);
     }
 }

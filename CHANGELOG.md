@@ -3,7 +3,7 @@
 Every MinnionDeck release, newest first. Downloads are on the [Releases](https://github.com/minnnion/MinnionDeck/releases) page.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.2.3] - 2026-11-19
 
 ### Added
 - **Starter profile:** a new library starts with a ready-made "Starter" profile built only from the app's own actions (volume, mic, media keys, copy/paste/undo, screenshot, show desktop, Task Manager, a website and a More page), so a new install never opens on an empty deck. It is made once; delete it and it stays deleted. An untouched empty "My profile" from an earlier version is replaced by it.
@@ -105,6 +105,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 First release of MinnionDeck, the native Rust desktop app: profiles, pages and buttons, phones over Wi-Fi, the Marketplace, tray, backups and updates.
 
+[0.2.3]: https://github.com/minnnion/MinnionDeck/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/minnnion/MinnionDeck/compare/v0.2.1...v0.2.2
 [0.2.0]: https://github.com/minnnion/MinnionDeck/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/minnnion/MinnionDeck/compare/v0.1.1...v0.1.2
